@@ -33,6 +33,7 @@ type Request struct {
 	Op     string
 	Method string
 	Path   string
+	Query  url.Values
 	Body   any
 }
 
@@ -106,11 +107,14 @@ func New(cfg ClientConfig) (*Client, error) {
 	}, nil
 }
 
-func (c *Client) buildURL(p string) (string, error) {
+func (c *Client) buildURL(p string, query url.Values) (string, error) {
 	if strings.ContainsAny(p, "?#") {
 		return "", errors.New("path must not contain '?' or '#'")
 	}
 	u := c.baseURL.JoinPath(p)
+	if len(query) > 0 {
+		u.RawQuery = query.Encode()
+	}
 	return u.String(), nil
 }
 
@@ -157,7 +161,7 @@ func (c *Client) DoJSON(ctx context.Context, req Request) ([]byte, error) {
 		body = buf
 	}
 
-	reqURL, err := c.buildURL(req.Path)
+	reqURL, err := c.buildURL(req.Path, req.Query)
 	if err != nil {
 		return nil, &polyerrors.Error{Kind: polyerrors.ErrRequestBuild, Op: req.Op, Message: err.Error(), Cause: err}
 	}
