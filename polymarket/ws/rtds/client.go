@@ -84,6 +84,7 @@ func NewClient(cfg Config) (*Client, error) {
 
 func (c *Client) Connect(ctx context.Context) error { return c.ws.Connect(ctx) }
 func (c *Client) Close() error                      { return c.ws.Close() }
+func (c *Client) Errors() <-chan error              { return c.ws.Errors() }
 
 func (c *Client) Read(ctx context.Context) ([]byte, error) { return c.ws.Read(ctx) }
 
