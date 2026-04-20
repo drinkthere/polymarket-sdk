@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
-	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -70,6 +70,13 @@ func New(cfg ClientConfig) (*Client, error) {
 			Message: "base_url scheme must be http or https",
 		}
 	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, &polyerrors.Error{
+			Kind:    polyerrors.ErrRequestBuild,
+			Op:      "httpx.new",
+			Message: "base_url must not contain query or fragment",
+		}
+	}
 
 	timeout := cfg.Timeout
 	if timeout <= 0 {
@@ -99,18 +106,17 @@ func New(cfg ClientConfig) (*Client, error) {
 	}, nil
 }
 
-func (c *Client) buildURL(p string) string {
-	u := *c.baseURL
-	u.Path = path.Join(c.baseURL.Path, p)
-	return u.String()
+func (c *Client) buildURL(p string) (string, error) {
+	if strings.ContainsAny(p, "?#") {
+		return "", errors.New("path must not contain '?' or '#'")
+	}
+	u := c.baseURL.JoinPath(p)
+	return u.String(), nil
 }
 
-func isTimeoutErr(err error) bool {
+func isNetTimeoutErr(err error) bool {
 	if err == nil {
 		return false
-	}
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-		return true
 	}
 	var ne net.Error
 	return errors.As(err, &ne) && ne.Timeout()
@@ -122,7 +128,11 @@ func (c *Client) readAllLimited(r io.Reader) (payload []byte, truncated bool, er
 		limit = defaultMaxResponseBytes
 	}
 
-	lr := io.LimitReader(r, limit+1)
+	readLimit := limit
+	if limit < math.MaxInt64 {
+		readLimit = limit + 1
+	}
+	lr := io.LimitReader(r, readLimit)
 	payload, err = io.ReadAll(lr)
 	if err != nil {
 		return nil, false, err
@@ -134,6 +144,10 @@ func (c *Client) readAllLimited(r io.Reader) (payload []byte, truncated bool, er
 }
 
 func (c *Client) DoJSON(ctx context.Context, req Request) ([]byte, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	var body io.Reader
 	if req.Body != nil {
 		buf := bytes.NewBuffer(nil)
@@ -143,7 +157,12 @@ func (c *Client) DoJSON(ctx context.Context, req Request) ([]byte, error) {
 		body = buf
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, req.Method, c.buildURL(req.Path), body)
+	reqURL, err := c.buildURL(req.Path)
+	if err != nil {
+		return nil, &polyerrors.Error{Kind: polyerrors.ErrRequestBuild, Op: req.Op, Message: err.Error(), Cause: err}
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, req.Method, reqURL, body)
 	if err != nil {
 		return nil, &polyerrors.Error{Kind: polyerrors.ErrRequestBuild, Op: req.Op, Message: err.Error(), Cause: err}
 	}
@@ -154,14 +173,16 @@ func (c *Client) DoJSON(ctx context.Context, req Request) ([]byte, error) {
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		kind := polyerrors.ErrNetwork
-		if isTimeoutErr(err) {
+		if errors.Is(err, context.Canceled) {
+			kind = polyerrors.ErrClosed
+		} else if errors.Is(err, context.DeadlineExceeded) || isNetTimeoutErr(err) {
 			kind = polyerrors.ErrTimeout
 		}
 		return nil, &polyerrors.Error{
-			Kind:   kind,
-			Op:     req.Op,
-			Method: req.Method,
-			URL:    httpReq.URL.String(),
+			Kind:    kind,
+			Op:      req.Op,
+			Method:  req.Method,
+			URL:     httpReq.URL.String(),
 			Message: err.Error(),
 			Cause:   err,
 		}
