@@ -69,8 +69,11 @@ func (c *Client) Subscribe(ctx context.Context, req SubscribeRequest) error {
 		return &polyerrors.Error{Kind: polyerrors.ErrRequestBuild, Op: "rtds.subscribe", Message: err.Error(), Cause: err}
 	}
 
+	if err := c.ws.Write(ctx, b); err != nil {
+		return err
+	}
 	c.ws.TrackSubscription("crypto:"+pair, b)
-	return c.ws.Write(ctx, b)
+	return nil
 }
 
 func (c *Client) Unsubscribe(ctx context.Context, req UnsubscribeRequest) error {
@@ -92,8 +95,11 @@ func (c *Client) Unsubscribe(ctx context.Context, req UnsubscribeRequest) error 
 		return &polyerrors.Error{Kind: polyerrors.ErrRequestBuild, Op: "rtds.unsubscribe", Message: err.Error(), Cause: err}
 	}
 
+	if err := c.ws.Write(ctx, b); err != nil {
+		return err
+	}
 	c.ws.UntrackSubscription("crypto:" + pair)
-	return c.ws.Write(ctx, b)
+	return nil
 }
 
 func (c *Client) SubscribeCrypto(ctx context.Context, symbol string) error {

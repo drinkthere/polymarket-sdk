@@ -3,12 +3,16 @@ package ws
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	polyerrors "github.com/drinkthere/polymarket-sdk/polymarket/errors"
 	"github.com/gorilla/websocket"
 )
 
@@ -284,5 +288,223 @@ func TestClient_Reconnect_DoesNotReplayUntrackedSubscriptions(t *testing.T) {
 
 	if conns.Load() < 2 {
 		t.Fatalf("expected at least 2 connections, got %d", conns.Load())
+	}
+}
+
+func TestClient_Connect_WhileConnected_ReconnectTrue_DoesNotReconnectThrash(t *testing.T) {
+	t.Parallel()
+
+	var conns atomic.Int64
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		up := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+		c, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade: %v", err)
+			return
+		}
+		defer c.Close()
+
+		conns.Add(1)
+		for {
+			if _, _, err := c.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := NewClient(ClientConfig{
+		URL:              "ws" + srv.URL[len("http"):],
+		Reconnect:        true,
+		ReconnectBackoff: 10 * time.Millisecond,
+		PingInterval:     0,
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := c.Connect(ctx); err != nil {
+		t.Fatalf("Connect 1: %v", err)
+	}
+	if err := c.Connect(ctx); err != nil {
+		t.Fatalf("Connect 2: %v", err)
+	}
+
+	// If the old session triggers reconnect on intentional swap, we'd see more than 2 dials quickly.
+	time.Sleep(200 * time.Millisecond)
+	if got := conns.Load(); got != 2 {
+		t.Fatalf("expected exactly 2 connections, got %d", got)
+	}
+}
+
+func TestClient_CloseConcurrentWithConnect_DoesNotLeaveActiveConnOrSession(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		up := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+		c, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade: %v", err)
+			return
+		}
+		defer c.Close()
+
+		for {
+			if _, _, err := c.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	unblockDial := make(chan struct{})
+	d := &websocket.Dialer{
+		NetDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			select {
+			case <-unblockDial:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+			var nd net.Dialer
+			return nd.DialContext(ctx, network, addr)
+		},
+	}
+
+	c, err := NewClient(ClientConfig{
+		URL:    "ws" + srv.URL[len("http"):],
+		Dialer: d,
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	connectDone := make(chan error, 1)
+	go func() { connectDone <- c.Connect(ctx) }()
+
+	// Give Connect() enough time to enter the dial path.
+	time.Sleep(25 * time.Millisecond)
+
+	if err := c.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	close(unblockDial)
+
+	err = <-connectDone
+	if err == nil {
+		t.Fatalf("expected Connect to fail after Close")
+	}
+	var pe *polyerrors.Error
+	if !errors.As(err, &pe) || pe.Kind != polyerrors.ErrClosed {
+		t.Fatalf("expected ErrClosed, got %v", err)
+	}
+
+	c.connMu.RLock()
+	if c.conn != nil {
+		c.connMu.RUnlock()
+		t.Fatalf("expected no active conn after Close+Connect race")
+	}
+	c.connMu.RUnlock()
+
+	c.sessionMu.Lock()
+	if c.sessionCancel != nil {
+		c.sessionMu.Unlock()
+		t.Fatalf("expected no active session after Close+Connect race")
+	}
+	c.sessionMu.Unlock()
+}
+
+func TestClient_ConcurrentPingAndWrites(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		up := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+		c, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade: %v", err)
+			return
+		}
+		defer c.Close()
+
+		for {
+			if _, _, err := c.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := NewClient(ClientConfig{
+		URL:          "ws" + srv.URL[len("http"):],
+		PingInterval: 1 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	if err := c.Connect(ctx); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	const workers = 8
+	const perWorker = 50
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, workers)
+
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			for n := 0; n < perWorker; n++ {
+				if err := c.Write(ctx, []byte("msg")); err != nil {
+					errCh <- errors.New("write worker " + string(rune('A'+i)) + ": " + err.Error())
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("concurrent writes failed: %v", err)
+	default:
+	}
+}
+
+func TestClient_Write_ContextDeadlineExceeded_IsTimeoutKind(t *testing.T) {
+	t.Parallel()
+
+	c, err := NewClient(ClientConfig{URL: "ws://localhost"})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	err = c.Write(ctx, []byte("x"))
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	var pe *polyerrors.Error
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected *polyerrors.Error, got %T %v", err, err)
+	}
+	if pe.Kind != polyerrors.ErrTimeout {
+		t.Fatalf("expected ErrTimeout, got %q (%v)", pe.Kind, pe)
 	}
 }

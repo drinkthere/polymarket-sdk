@@ -66,8 +66,11 @@ func (c *Client) Subscribe(ctx context.Context, req SubscribeRequest) error {
 		return &polyerrors.Error{Kind: polyerrors.ErrRequestBuild, Op: "market.subscribe", Message: err.Error(), Cause: err}
 	}
 	key := "market:" + joinInt64(req.AssetIDs)
+	if err := c.ws.Write(ctx, b); err != nil {
+		return err
+	}
 	c.ws.TrackSubscription(key, b)
-	return c.ws.Write(ctx, b)
+	return nil
 }
 
 func (c *Client) Unsubscribe(ctx context.Context, req UnsubscribeRequest) error {
@@ -86,8 +89,11 @@ func (c *Client) Unsubscribe(ctx context.Context, req UnsubscribeRequest) error 
 		return &polyerrors.Error{Kind: polyerrors.ErrRequestBuild, Op: "market.unsubscribe", Message: err.Error(), Cause: err}
 	}
 	key := "market:" + joinInt64(req.AssetIDs)
+	if err := c.ws.Write(ctx, b); err != nil {
+		return err
+	}
 	c.ws.UntrackSubscription(key)
-	return c.ws.Write(ctx, b)
+	return nil
 }
 
 func (c *Client) SubscribeMarket(ctx context.Context, assetIDs []int64) error {
