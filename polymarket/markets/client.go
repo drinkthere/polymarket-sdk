@@ -64,8 +64,15 @@ type EventRef struct {
 	Slug string `json:"slug"`
 }
 
-func NewClient(httpClient *httpx.Client) *Client {
-	return &Client{httpClient: httpClient}
+func NewClient(httpClient *httpx.Client) (*Client, error) {
+	if httpClient == nil {
+		return nil, &polyerrors.Error{
+			Kind:    polyerrors.ErrRequestBuild,
+			Op:      "markets.new",
+			Message: "http transport is required",
+		}
+	}
+	return &Client{httpClient: httpClient}, nil
 }
 
 func (c *Client) ListMarkets(ctx context.Context, req ListRequest) (ListResponse, error) {

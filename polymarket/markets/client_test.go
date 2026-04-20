@@ -38,7 +38,10 @@ func TestClientListMarketsBuildsRequestAndDecodesResponse(t *testing.T) {
 		t.Fatalf("httpx.New() error: %v", err)
 	}
 
-	client := NewClient(httpClient)
+	client, err := NewClient(httpClient)
+	if err != nil {
+		t.Fatalf("NewClient() error: %v", err)
+	}
 	resp, err := client.ListMarkets(context.Background(), ListRequest{Active: true, Closed: false, Limit: 1000, Offset: 2000})
 	if err != nil {
 		t.Fatalf("ListMarkets() error: %v", err)
@@ -72,7 +75,10 @@ func TestClientGetEventsBySlugBuildsRequestAndDecodesResponse(t *testing.T) {
 		t.Fatalf("httpx.New() error: %v", err)
 	}
 
-	client := NewClient(httpClient)
+	client, err := NewClient(httpClient)
+	if err != nil {
+		t.Fatalf("NewClient() error: %v", err)
+	}
 	resp, err := client.GetEventsBySlug(context.Background(), "btc-updown-5m-1776171600")
 	if err != nil {
 		t.Fatalf("GetEventsBySlug() error: %v", err)
@@ -100,7 +106,12 @@ func TestClientListMarketsReturnsTypedDecodeError(t *testing.T) {
 		t.Fatalf("httpx.New() error: %v", err)
 	}
 
-	_, err = NewClient(httpClient).ListMarkets(context.Background(), ListRequest{})
+	client, err := NewClient(httpClient)
+	if err != nil {
+		t.Fatalf("NewClient() error: %v", err)
+	}
+
+	_, err = client.ListMarkets(context.Background(), ListRequest{})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -125,7 +136,12 @@ func TestClientGetEventsBySlugReturnsTypedProtocolErrorForMissingIDs(t *testing.
 		t.Fatalf("httpx.New() error: %v", err)
 	}
 
-	_, err = NewClient(httpClient).GetEventsBySlug(context.Background(), "btc-updown-5m-1776171600")
+	client, err := NewClient(httpClient)
+	if err != nil {
+		t.Fatalf("NewClient() error: %v", err)
+	}
+
+	_, err = client.GetEventsBySlug(context.Background(), "btc-updown-5m-1776171600")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -135,5 +151,23 @@ func TestClientGetEventsBySlugReturnsTypedProtocolErrorForMissingIDs(t *testing.
 	}
 	if typed.Kind != polyerrors.ErrProtocol {
 		t.Fatalf("expected ErrProtocol, got %v", typed.Kind)
+	}
+}
+
+func TestNewClientNilTransportReturnsTypedRequestBuildError(t *testing.T) {
+	_, err := NewClient(nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var typed *polyerrors.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected *errors.Error, got %T", err)
+	}
+	if typed.Kind != polyerrors.ErrRequestBuild {
+		t.Fatalf("expected ErrRequestBuild, got %v", typed.Kind)
+	}
+	if typed.Op != "markets.new" {
+		t.Fatalf("unexpected op: %q", typed.Op)
 	}
 }
