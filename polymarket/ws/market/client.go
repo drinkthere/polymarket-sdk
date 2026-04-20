@@ -3,17 +3,23 @@ package market
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	polyerrors "github.com/drinkthere/polymarket-sdk/polymarket/errors"
 	"github.com/drinkthere/polymarket-sdk/polymarket/ws"
+	"github.com/gorilla/websocket"
 )
 
 type Config struct {
 	URL string
 
+	Header *http.Header
+	Dialer *websocket.Dialer
+
+	WriteTimeout time.Duration
 	PingInterval time.Duration
 
 	Reconnect        bool
@@ -22,6 +28,11 @@ type Config struct {
 
 type Client struct {
 	ws *ws.Client
+}
+
+type Message struct {
+	MessageType string
+	Raw         []byte
 }
 
 type SubscribeRequest struct {
@@ -35,6 +46,9 @@ type UnsubscribeRequest struct {
 func NewClient(cfg Config) (*Client, error) {
 	wsc, err := ws.NewClient(ws.ClientConfig{
 		URL:              cfg.URL,
+		Header:           cfg.Header,
+		Dialer:           cfg.Dialer,
+		WriteTimeout:     cfg.WriteTimeout,
 		PingInterval:     cfg.PingInterval,
 		Reconnect:        cfg.Reconnect,
 		ReconnectBackoff: cfg.ReconnectBackoff,
@@ -49,6 +63,18 @@ func (c *Client) Connect(ctx context.Context) error { return c.ws.Connect(ctx) }
 func (c *Client) Close() error                      { return c.ws.Close() }
 
 func (c *Client) Read(ctx context.Context) ([]byte, error) { return c.ws.Read(ctx) }
+
+func (c *Client) ReadMessage(ctx context.Context) (Message, error) {
+	payload, err := c.ws.Read(ctx)
+	if err != nil {
+		return Message{}, err
+	}
+	cp := append([]byte(nil), payload...)
+	return Message{
+		MessageType: ws.InferMessageType(cp),
+		Raw:         cp,
+	}, nil
+}
 
 func (c *Client) Subscribe(ctx context.Context, req SubscribeRequest) error {
 	if len(req.AssetIDs) == 0 {
