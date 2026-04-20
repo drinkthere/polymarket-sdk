@@ -75,3 +75,95 @@ func TestClient_SubscribeMarket_IncludesAssetsIDs(t *testing.T) {
 	}
 }
 
+func TestClient_Subscribe_Unsubscribe_Read(t *testing.T) {
+	t.Parallel()
+
+	subMsgCh := make(chan []byte, 1)
+	unsubMsgCh := make(chan []byte, 1)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		up := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+		c, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade: %v", err)
+			return
+		}
+		defer c.Close()
+
+		_, payload, err := c.ReadMessage()
+		if err != nil {
+			t.Errorf("ReadMessage(sub): %v", err)
+			return
+		}
+		subMsgCh <- payload
+
+		if err := c.WriteMessage(websocket.TextMessage, []byte("book")); err != nil {
+			t.Errorf("WriteMessage: %v", err)
+			return
+		}
+
+		_, payload, err = c.ReadMessage()
+		if err != nil {
+			t.Errorf("ReadMessage(unsub): %v", err)
+			return
+		}
+		unsubMsgCh <- payload
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := NewClient(Config{URL: "ws" + srv.URL[len("http"):]})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := c.Connect(ctx); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	if err := c.Subscribe(ctx, SubscribeRequest{AssetIDs: []int64{101, 202, 303}}); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	got, err := c.Read(ctx)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if string(got) != "book" {
+		t.Fatalf("unexpected read: %q", string(got))
+	}
+
+	if err := c.Unsubscribe(ctx, UnsubscribeRequest{AssetIDs: []int64{101, 202, 303}}); err != nil {
+		t.Fatalf("Unsubscribe: %v", err)
+	}
+
+	var subPayload, unsubPayload []byte
+	select {
+	case subPayload = <-subMsgCh:
+	case <-ctx.Done():
+		t.Fatalf("timeout waiting for subscribe: %v", ctx.Err())
+	}
+	select {
+	case unsubPayload = <-unsubMsgCh:
+	case <-ctx.Done():
+		t.Fatalf("timeout waiting for unsubscribe: %v", ctx.Err())
+	}
+
+	var sub map[string]any
+	if err := json.Unmarshal(subPayload, &sub); err != nil {
+		t.Fatalf("unmarshal subscribe: %v", err)
+	}
+	if sub["type"] != "subscribe" || sub["channel"] != "market" {
+		t.Fatalf("unexpected subscribe envelope: %v", sub)
+	}
+
+	var unsub map[string]any
+	if err := json.Unmarshal(unsubPayload, &unsub); err != nil {
+		t.Fatalf("unmarshal unsubscribe: %v", err)
+	}
+	if unsub["type"] != "unsubscribe" || unsub["channel"] != "market" {
+		t.Fatalf("unexpected unsubscribe envelope: %v", unsub)
+	}
+}

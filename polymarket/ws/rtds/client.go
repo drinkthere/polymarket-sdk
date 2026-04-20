@@ -2,6 +2,7 @@ package rtds
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -23,6 +24,14 @@ type Client struct {
 	ws *ws.Client
 }
 
+type SubscribeRequest struct {
+	Symbol string
+}
+
+type UnsubscribeRequest struct {
+	Symbol string
+}
+
 func NewClient(cfg Config) (*Client, error) {
 	wsc, err := ws.NewClient(ws.ClientConfig{
 		URL:              cfg.URL,
@@ -37,12 +46,14 @@ func NewClient(cfg Config) (*Client, error) {
 }
 
 func (c *Client) Connect(ctx context.Context) error { return c.ws.Connect(ctx) }
-func (c *Client) Close() error                     { return c.ws.Close() }
+func (c *Client) Close() error                      { return c.ws.Close() }
 
-func (c *Client) SubscribeCrypto(ctx context.Context, symbol string) error {
-	s := strings.TrimSpace(symbol)
+func (c *Client) Read(ctx context.Context) ([]byte, error) { return c.ws.Read(ctx) }
+
+func (c *Client) Subscribe(ctx context.Context, req SubscribeRequest) error {
+	s := strings.TrimSpace(req.Symbol)
 	if s == "" {
-		return &polyerrors.Error{Kind: polyerrors.ErrRequestBuild, Op: "rtds.subscribe_crypto", Message: "symbol is required"}
+		return &polyerrors.Error{Kind: polyerrors.ErrRequestBuild, Op: "rtds.subscribe", Message: "symbol is required"}
 	}
 	pair := strings.ToLower(s) + "usdt"
 	filters := fmt.Sprintf(`{"symbol":"%s"}`, pair) // API expects this as a JSON string, not an object.
@@ -52,6 +63,39 @@ func (c *Client) SubscribeCrypto(ctx context.Context, symbol string) error {
 		"channel": "crypto",
 		"filters": filters,
 	}
-	return c.ws.SubscribeJSON(ctx, "crypto:"+pair, payload)
+
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return &polyerrors.Error{Kind: polyerrors.ErrRequestBuild, Op: "rtds.subscribe", Message: err.Error(), Cause: err}
+	}
+
+	c.ws.TrackSubscription("crypto:"+pair, b)
+	return c.ws.Write(ctx, b)
 }
 
+func (c *Client) Unsubscribe(ctx context.Context, req UnsubscribeRequest) error {
+	s := strings.TrimSpace(req.Symbol)
+	if s == "" {
+		return &polyerrors.Error{Kind: polyerrors.ErrRequestBuild, Op: "rtds.unsubscribe", Message: "symbol is required"}
+	}
+	pair := strings.ToLower(s) + "usdt"
+	filters := fmt.Sprintf(`{"symbol":"%s"}`, pair) // API expects this as a JSON string, not an object.
+
+	payload := map[string]any{
+		"type":    "unsubscribe",
+		"channel": "crypto",
+		"filters": filters,
+	}
+
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return &polyerrors.Error{Kind: polyerrors.ErrRequestBuild, Op: "rtds.unsubscribe", Message: err.Error(), Cause: err}
+	}
+
+	c.ws.UntrackSubscription("crypto:" + pair)
+	return c.ws.Write(ctx, b)
+}
+
+func (c *Client) SubscribeCrypto(ctx context.Context, symbol string) error {
+	return c.Subscribe(ctx, SubscribeRequest{Symbol: symbol})
+}

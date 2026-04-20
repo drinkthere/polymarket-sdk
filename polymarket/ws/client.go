@@ -37,11 +37,15 @@ type Client struct {
 	sessionMu     sync.Mutex
 	sessionCancel context.CancelFunc
 
-	reconnectMu sync.Mutex
+	reconnectMu  sync.Mutex
 	reconnecting bool
 
 	closedMu sync.Mutex
 	closed   bool
+
+	readCh chan []byte
+	errCh  chan error
+	doneCh chan struct{}
 
 	subsMu sync.Mutex
 	subs   map[string][]byte
@@ -77,15 +81,23 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	}
 
 	c := &Client{
-		cfg: cfg,
+		cfg:    cfg,
 		dialer: d,
-		subs: make(map[string][]byte),
+		readCh: make(chan []byte, 256),
+		errCh:  make(chan error, 16),
+		doneCh: make(chan struct{}),
+		subs:   make(map[string][]byte),
 	}
 	c.cfg.URL = url
 	c.cfg.WriteTimeout = wt
 	c.cfg.ReconnectBackoff = backoff
 	return c, nil
 }
+
+// Errors returns a channel where connection/session errors are published.
+// The channel is never closed; consumers should stop when Close() is called or
+// their own context ends.
+func (c *Client) Errors() <-chan error { return c.errCh }
 
 func (c *Client) isClosed() bool {
 	c.closedMu.Lock()
@@ -101,6 +113,8 @@ func (c *Client) Close() error {
 	}
 	c.closed = true
 	c.closedMu.Unlock()
+
+	close(c.doneCh)
 
 	c.sessionMu.Lock()
 	cancel := c.sessionCancel
@@ -207,13 +221,30 @@ func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-c.doneCh:
+			return
 		default:
 		}
 
-		if _, _, err := conn.ReadMessage(); err != nil {
+		mt, payload, err := conn.ReadMessage()
+		if err != nil {
+			if !c.isClosed() && !errors.Is(err, context.Canceled) {
+				c.emitErr(&polyerrors.Error{Kind: polyerrors.ErrNetwork, Op: "ws.read", URL: c.cfg.URL, Message: err.Error(), Cause: err})
+			}
 			if c.cfg.Reconnect && !c.isClosed() {
 				c.startReconnect()
 			}
+			return
+		}
+
+		if mt != websocket.TextMessage && mt != websocket.BinaryMessage {
+			continue
+		}
+		select {
+		case c.readCh <- payload:
+		case <-ctx.Done():
+			return
+		case <-c.doneCh:
 			return
 		}
 	}
@@ -242,6 +273,8 @@ func (c *Client) startReconnect() {
 			time.Sleep(c.cfg.ReconnectBackoff)
 			if err := c.connect(context.Background(), true); err == nil {
 				return
+			} else {
+				c.emitErr(err)
 			}
 		}
 	}()
@@ -268,24 +301,77 @@ func (c *Client) WriteJSON(ctx context.Context, v any) error {
 	if err != nil {
 		return &polyerrors.Error{Kind: polyerrors.ErrRequestBuild, Op: "ws.write_json", Message: err.Error(), Cause: err}
 	}
-	return c.WriteText(ctx, b)
+	return c.Write(ctx, b)
 }
 
-func (c *Client) WriteText(ctx context.Context, payload []byte) error {
+func (c *Client) Write(ctx context.Context, payload []byte) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := ctx.Err(); err != nil {
+		return &polyerrors.Error{Kind: polyerrors.ErrClosed, Op: "ws.write", Message: err.Error(), Cause: err}
+	}
+
 	conn, err := c.connOrErr()
 	if err != nil {
 		return err
 	}
 
 	deadline := time.Now().Add(c.cfg.WriteTimeout)
+	if dl, ok := ctx.Deadline(); ok && dl.Before(deadline) {
+		deadline = dl
+	}
 	_ = conn.SetWriteDeadline(deadline)
 	if err := conn.WriteMessage(websocket.TextMessage, payload); err != nil {
-		return &polyerrors.Error{Kind: polyerrors.ErrNetwork, Op: "ws.write", URL: c.cfg.URL, Message: err.Error(), Cause: err}
+		perr := &polyerrors.Error{Kind: polyerrors.ErrNetwork, Op: "ws.write", URL: c.cfg.URL, Message: err.Error(), Cause: err}
+		c.emitErr(perr)
+		return perr
 	}
 	return nil
+}
+
+func (c *Client) WriteText(ctx context.Context, payload []byte) error {
+	return c.Write(ctx, payload)
+}
+
+func (c *Client) Read(ctx context.Context) ([]byte, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case b := <-c.readCh:
+		return b, nil
+	case <-c.doneCh:
+		return nil, &polyerrors.Error{Kind: polyerrors.ErrClosed, Op: "ws.read", Message: "client is closed"}
+	case <-ctx.Done():
+		kind := polyerrors.ErrClosed
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			kind = polyerrors.ErrTimeout
+		}
+		return nil, &polyerrors.Error{Kind: kind, Op: "ws.read", Message: ctx.Err().Error(), Cause: ctx.Err()}
+	}
+}
+
+func (c *Client) TrackSubscription(key string, payload []byte) {
+	k := strings.TrimSpace(key)
+	if k == "" {
+		return
+	}
+	cp := make([]byte, len(payload))
+	copy(cp, payload)
+	c.subsMu.Lock()
+	c.subs[k] = cp
+	c.subsMu.Unlock()
+}
+
+func (c *Client) UntrackSubscription(key string) {
+	k := strings.TrimSpace(key)
+	if k == "" {
+		return
+	}
+	c.subsMu.Lock()
+	delete(c.subs, k)
+	c.subsMu.Unlock()
 }
 
 func (c *Client) SubscribeJSON(ctx context.Context, key string, v any) error {
@@ -296,12 +382,8 @@ func (c *Client) SubscribeJSON(ctx context.Context, key string, v any) error {
 	if err != nil {
 		return &polyerrors.Error{Kind: polyerrors.ErrRequestBuild, Op: "ws.subscribe_json", Message: err.Error(), Cause: err}
 	}
-	if strings.TrimSpace(key) != "" {
-		c.subsMu.Lock()
-		c.subs[key] = b
-		c.subsMu.Unlock()
-	}
-	return c.WriteText(ctx, b)
+	c.TrackSubscription(key, b)
+	return c.Write(ctx, b)
 }
 
 func (c *Client) replaySubscriptions(ctx context.Context) error {
@@ -318,10 +400,19 @@ func (c *Client) replaySubscriptions(ctx context.Context) error {
 	c.subsMu.Unlock()
 
 	for _, b := range snap {
-		if err := c.WriteText(ctx, b); err != nil {
+		if err := c.Write(ctx, b); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
+func (c *Client) emitErr(err error) {
+	if err == nil {
+		return
+	}
+	select {
+	case c.errCh <- err:
+	default:
+	}
+}

@@ -2,6 +2,7 @@ package market
 
 import (
 	"context"
+	"encoding/json"
 	"strconv"
 	"strings"
 	"time"
@@ -23,6 +24,14 @@ type Client struct {
 	ws *ws.Client
 }
 
+type SubscribeRequest struct {
+	AssetIDs []int64
+}
+
+type UnsubscribeRequest struct {
+	AssetIDs []int64
+}
+
 func NewClient(cfg Config) (*Client, error) {
 	wsc, err := ws.NewClient(ws.ClientConfig{
 		URL:              cfg.URL,
@@ -37,19 +46,52 @@ func NewClient(cfg Config) (*Client, error) {
 }
 
 func (c *Client) Connect(ctx context.Context) error { return c.ws.Connect(ctx) }
-func (c *Client) Close() error                     { return c.ws.Close() }
+func (c *Client) Close() error                      { return c.ws.Close() }
 
-func (c *Client) SubscribeMarket(ctx context.Context, assetIDs []int64) error {
-	if len(assetIDs) == 0 {
-		return &polyerrors.Error{Kind: polyerrors.ErrRequestBuild, Op: "market.subscribe_market", Message: "assetIDs is required"}
+func (c *Client) Read(ctx context.Context) ([]byte, error) { return c.ws.Read(ctx) }
+
+func (c *Client) Subscribe(ctx context.Context, req SubscribeRequest) error {
+	if len(req.AssetIDs) == 0 {
+		return &polyerrors.Error{Kind: polyerrors.ErrRequestBuild, Op: "market.subscribe", Message: "assetIDs is required"}
 	}
 
 	payload := map[string]any{
-		"type":      "subscribe",
-		"channel":   "market",
-		"assets_ids": assetIDs,
+		"type":       "subscribe",
+		"channel":    "market",
+		"assets_ids": req.AssetIDs,
 	}
-	return c.ws.SubscribeJSON(ctx, "market:"+joinInt64(assetIDs), payload)
+
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return &polyerrors.Error{Kind: polyerrors.ErrRequestBuild, Op: "market.subscribe", Message: err.Error(), Cause: err}
+	}
+	key := "market:" + joinInt64(req.AssetIDs)
+	c.ws.TrackSubscription(key, b)
+	return c.ws.Write(ctx, b)
+}
+
+func (c *Client) Unsubscribe(ctx context.Context, req UnsubscribeRequest) error {
+	if len(req.AssetIDs) == 0 {
+		return &polyerrors.Error{Kind: polyerrors.ErrRequestBuild, Op: "market.unsubscribe", Message: "assetIDs is required"}
+	}
+
+	payload := map[string]any{
+		"type":       "unsubscribe",
+		"channel":    "market",
+		"assets_ids": req.AssetIDs,
+	}
+
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return &polyerrors.Error{Kind: polyerrors.ErrRequestBuild, Op: "market.unsubscribe", Message: err.Error(), Cause: err}
+	}
+	key := "market:" + joinInt64(req.AssetIDs)
+	c.ws.UntrackSubscription(key)
+	return c.ws.Write(ctx, b)
+}
+
+func (c *Client) SubscribeMarket(ctx context.Context, assetIDs []int64) error {
+	return c.Subscribe(ctx, SubscribeRequest{AssetIDs: assetIDs})
 }
 
 func joinInt64(ids []int64) string {
@@ -62,4 +104,3 @@ func joinInt64(ids []int64) string {
 	}
 	return b.String()
 }
-
