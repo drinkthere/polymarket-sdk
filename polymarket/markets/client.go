@@ -112,9 +112,25 @@ func (c *Client) GetEventsBySlug(ctx context.Context, slug string) (GetEventsByS
 }
 
 func (c *Client) GetCryptoPriceOpen(ctx context.Context, req CryptoPriceRequest) (CryptoPriceResponse, error) {
+	symbol := strings.ToUpper(strings.TrimSpace(req.Symbol))
+	if symbol == "" {
+		return CryptoPriceResponse{}, requestBuildError("crypto_price.get_open", "symbol is required")
+	}
+
+	variant := strings.TrimSpace(req.Variant)
+	if variant == "" {
+		return CryptoPriceResponse{}, requestBuildError("crypto_price.get_open", "variant is required")
+	}
+	if req.EventStartTime.IsZero() {
+		return CryptoPriceResponse{}, requestBuildError("crypto_price.get_open", "eventStartTime is required")
+	}
+	if req.EndDate.IsZero() {
+		return CryptoPriceResponse{}, requestBuildError("crypto_price.get_open", "endDate is required")
+	}
+
 	query := url.Values{}
-	query.Set("symbol", strings.ToUpper(strings.TrimSpace(req.Symbol)))
-	query.Set("variant", req.Variant)
+	query.Set("symbol", symbol)
+	query.Set("variant", variant)
 	query.Set("eventStartTime", req.EventStartTime.UTC().Format("2006-01-02T15:04:05Z"))
 	query.Set("endDate", req.EndDate.UTC().Format("2006-01-02T15:04:05Z"))
 
@@ -173,6 +189,14 @@ func protocolError(op string, message string) error {
 		Kind:    polyerrors.ErrProtocol,
 		Op:      op,
 		Method:  http.MethodGet,
+		Message: message,
+	}
+}
+
+func requestBuildError(op string, message string) error {
+	return &polyerrors.Error{
+		Kind:    polyerrors.ErrRequestBuild,
+		Op:      op,
 		Message: message,
 	}
 }

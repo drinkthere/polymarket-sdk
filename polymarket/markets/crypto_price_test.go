@@ -22,7 +22,7 @@ func TestGetCryptoPriceOpenBuildsExpectedQuery(t *testing.T) {
 		if got := r.URL.Query().Get("symbol"); got != "BTC" {
 			t.Fatalf("unexpected symbol: %s", got)
 		}
-		if got := r.URL.Query().Get("variant"); got != " fiveminute " {
+		if got := r.URL.Query().Get("variant"); got != "fiveminute" {
 			t.Fatalf("unexpected variant: %s", got)
 		}
 		if got := r.URL.Query().Get("eventStartTime"); got != "2026-04-21T11:25:00Z" {
@@ -126,5 +126,81 @@ func TestGetCryptoPriceOpenReturnsTypedProtocolErrorForNonPositiveOpenPrice(t *t
 	}
 	if typed.Kind != polyerrors.ErrProtocol {
 		t.Fatalf("expected ErrProtocol, got %v", typed.Kind)
+	}
+}
+
+func TestGetCryptoPriceOpenReturnsTypedRequestBuildErrorForInvalidInput(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("unexpected request")
+	}))
+	defer server.Close()
+
+	httpClient, err := httpx.New(httpx.ClientConfig{BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("httpx.New: %v", err)
+	}
+	client, err := markets.NewClient(httpClient)
+	if err != nil {
+		t.Fatalf("markets.NewClient: %v", err)
+	}
+
+	testCases := []struct {
+		name string
+		req  markets.CryptoPriceRequest
+	}{
+		{
+			name: "empty symbol",
+			req: markets.CryptoPriceRequest{
+				Symbol:         "   ",
+				Variant:        "fiveminute",
+				EventStartTime: time.Date(2026, 4, 21, 11, 25, 0, 0, time.UTC),
+				EndDate:        time.Date(2026, 4, 21, 11, 30, 0, 0, time.UTC),
+			},
+		},
+		{
+			name: "empty variant",
+			req: markets.CryptoPriceRequest{
+				Symbol:         "BTC",
+				Variant:        "   ",
+				EventStartTime: time.Date(2026, 4, 21, 11, 25, 0, 0, time.UTC),
+				EndDate:        time.Date(2026, 4, 21, 11, 30, 0, 0, time.UTC),
+			},
+		},
+		{
+			name: "zero event start time",
+			req: markets.CryptoPriceRequest{
+				Symbol:  "BTC",
+				Variant: "fiveminute",
+				EndDate: time.Date(2026, 4, 21, 11, 30, 0, 0, time.UTC),
+			},
+		},
+		{
+			name: "zero end date",
+			req: markets.CryptoPriceRequest{
+				Symbol:         "BTC",
+				Variant:        "fiveminute",
+				EventStartTime: time.Date(2026, 4, 21, 11, 25, 0, 0, time.UTC),
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := client.GetCryptoPriceOpen(context.Background(), tc.req)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+
+			var typed *polyerrors.Error
+			if !errors.As(err, &typed) {
+				t.Fatalf("expected *errors.Error, got %T", err)
+			}
+			if typed.Kind != polyerrors.ErrRequestBuild {
+				t.Fatalf("expected ErrRequestBuild, got %v", typed.Kind)
+			}
+			if typed.Op != "crypto_price.get_open" {
+				t.Fatalf("unexpected op: %q", typed.Op)
+			}
+		})
 	}
 }
