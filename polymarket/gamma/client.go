@@ -63,31 +63,26 @@ func (c *Client) GetSettlementBySlug(ctx context.Context, slug string) (Outcome,
 		return OutcomeUnsettled, decodeError(settlementBySlugOp, payload, err)
 	}
 
-	candidate := OutcomeUnsettled
 	for _, event := range events {
 		for _, market := range event.Markets {
 			if !market.Closed {
 				return OutcomeUnsettled, nil
 			}
 
-			marketOutcome, err := outcomeFromPrices(market.OutcomePrices)
-			if err != nil {
-				return OutcomeUnsettled, err
+			var prices []string
+			if err := json.Unmarshal([]byte(market.OutcomePrices), &prices); err != nil {
+				return OutcomeUnsettled, decodeError(settlementBySlugOp, []byte(market.OutcomePrices), err)
 			}
-			if marketOutcome == OutcomeUnsettled {
-				continue
+			if len(prices) == 2 && prices[0] == "1" && prices[1] == "0" {
+				return OutcomeYes, nil
 			}
-			if candidate == OutcomeUnsettled {
-				candidate = marketOutcome
-				continue
-			}
-			if candidate != marketOutcome {
-				return OutcomeUnsettled, nil
+			if len(prices) == 2 && prices[0] == "0" && prices[1] == "1" {
+				return OutcomeNo, nil
 			}
 		}
 	}
 
-	return candidate, nil
+	return OutcomeUnsettled, nil
 }
 
 func decodeError(op string, rawBody []byte, err error) error {
@@ -99,18 +94,4 @@ func decodeError(op string, rawBody []byte, err error) error {
 		Cause:   err,
 		RawBody: rawBody,
 	}
-}
-
-func outcomeFromPrices(raw string) (Outcome, error) {
-	var prices []string
-	if err := json.Unmarshal([]byte(raw), &prices); err != nil {
-		return OutcomeUnsettled, decodeError(settlementBySlugOp, []byte(raw), err)
-	}
-	if len(prices) == 2 && prices[0] == "1" && prices[1] == "0" {
-		return OutcomeYes, nil
-	}
-	if len(prices) == 2 && prices[0] == "0" && prices[1] == "1" {
-		return OutcomeNo, nil
-	}
-	return OutcomeUnsettled, nil
 }

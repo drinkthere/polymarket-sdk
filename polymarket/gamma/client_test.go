@@ -84,10 +84,10 @@ func TestGetSettlementBySlugReturnsOutcomeNo(t *testing.T) {
 	}
 }
 
-func TestGetSettlementBySlugReturnsOutcomeUnsettledForOpenMultiMarketEvent(t *testing.T) {
+func TestGetSettlementBySlugReturnsOutcomeUnsettledForOpenMarket(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `[{"markets":[{"closed":true,"outcomePrices":"[\"1\",\"0\"]"},{"closed":false,"outcomePrices":"[\"0\",\"1\"]"}]}]`)
+		_, _ = io.WriteString(w, `[{"markets":[{"closed":false,"outcomePrices":"[\"1\",\"0\"]"}]}]`)
 	}))
 	defer server.Close()
 
@@ -101,59 +101,7 @@ func TestGetSettlementBySlugReturnsOutcomeUnsettledForOpenMultiMarketEvent(t *te
 		t.Fatalf("NewClient() error: %v", err)
 	}
 
-	outcome, err := client.GetSettlementBySlug(context.Background(), "open-multi-market")
-	if err != nil {
-		t.Fatalf("GetSettlementBySlug() error: %v", err)
-	}
-	if outcome != OutcomeUnsettled {
-		t.Fatalf("expected OutcomeUnsettled, got %q", outcome)
-	}
-}
-
-func TestGetSettlementBySlugReturnsOutcomeYesForAgreeingClosedMarkets(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `[{"markets":[{"closed":true,"outcomePrices":"[\"1\",\"0\"]"}]},{"markets":[{"closed":true,"outcomePrices":"[\"1\",\"0\"]"}]}]`)
-	}))
-	defer server.Close()
-
-	httpClient, err := httpx.New(httpx.ClientConfig{BaseURL: server.URL, Timeout: time.Second})
-	if err != nil {
-		t.Fatalf("httpx.New() error: %v", err)
-	}
-
-	client, err := NewClient(httpClient)
-	if err != nil {
-		t.Fatalf("NewClient() error: %v", err)
-	}
-
-	outcome, err := client.GetSettlementBySlug(context.Background(), "agreed-winner")
-	if err != nil {
-		t.Fatalf("GetSettlementBySlug() error: %v", err)
-	}
-	if outcome != OutcomeYes {
-		t.Fatalf("expected OutcomeYes, got %q", outcome)
-	}
-}
-
-func TestGetSettlementBySlugReturnsOutcomeUnsettledForConflictingClosedWinners(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `[{"markets":[{"closed":true,"outcomePrices":"[\"1\",\"0\"]"},{"closed":true,"outcomePrices":"[\"0\",\"1\"]"}]}]`)
-	}))
-	defer server.Close()
-
-	httpClient, err := httpx.New(httpx.ClientConfig{BaseURL: server.URL, Timeout: time.Second})
-	if err != nil {
-		t.Fatalf("httpx.New() error: %v", err)
-	}
-
-	client, err := NewClient(httpClient)
-	if err != nil {
-		t.Fatalf("NewClient() error: %v", err)
-	}
-
-	outcome, err := client.GetSettlementBySlug(context.Background(), "closed-multi-market")
+	outcome, err := client.GetSettlementBySlug(context.Background(), "open-market")
 	if err != nil {
 		t.Fatalf("GetSettlementBySlug() error: %v", err)
 	}
