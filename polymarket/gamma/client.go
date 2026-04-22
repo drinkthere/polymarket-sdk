@@ -68,7 +68,11 @@ func (c *Client) GetSettlementBySlug(ctx context.Context, slug string) (Outcome,
 			if !market.Closed {
 				return OutcomeUnsettled, nil
 			}
+		}
+	}
 
+	for _, event := range events {
+		for _, market := range event.Markets {
 			var prices []string
 			if err := json.Unmarshal([]byte(market.OutcomePrices), &prices); err != nil {
 				return OutcomeUnsettled, decodeError(settlementBySlugOp, []byte(market.OutcomePrices), err)
