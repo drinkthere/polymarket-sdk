@@ -174,6 +174,32 @@ func TestGetSettlementBySlugReturnsOutcomeUnsettledForNonExactWinningArrays(t *t
 	}
 }
 
+func TestGetSettlementBySlugReturnsLaterExactWinnerAfterNonExactPrices(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `[{"markets":[{"closed":true,"outcomePrices":"[\"1\",\"1\"]"},{"closed":true,"outcomePrices":"[\"0\",\"1\"]"}]}]`)
+	}))
+	defer server.Close()
+
+	httpClient, err := httpx.New(httpx.ClientConfig{BaseURL: server.URL, Timeout: time.Second})
+	if err != nil {
+		t.Fatalf("httpx.New() error: %v", err)
+	}
+
+	client, err := NewClient(httpClient)
+	if err != nil {
+		t.Fatalf("NewClient() error: %v", err)
+	}
+
+	outcome, err := client.GetSettlementBySlug(context.Background(), "later-exact-winner")
+	if err != nil {
+		t.Fatalf("GetSettlementBySlug() error: %v", err)
+	}
+	if outcome != OutcomeNo {
+		t.Fatalf("expected OutcomeNo, got %q", outcome)
+	}
+}
+
 func TestNewClientNilTransportReturnsTypedRequestBuildError(t *testing.T) {
 	_, err := NewClient(nil)
 	if err == nil {
