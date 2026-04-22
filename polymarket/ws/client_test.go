@@ -206,6 +206,103 @@ func TestClient_Read_DeliversApplicationMessages(t *testing.T) {
 	}
 }
 
+func TestClient_Read_DeliversPostReconnectMessages(t *testing.T) {
+	t.Parallel()
+
+	var conns atomic.Int64
+	firstConnSub := make(chan []byte, 1)
+	secondConnSub := make(chan []byte, 1)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		up := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+		conn, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade: %v", err)
+			return
+		}
+		defer conn.Close()
+
+		switch conns.Add(1) {
+		case 1:
+			_, payload, err := conn.ReadMessage()
+			if err != nil {
+				t.Errorf("ReadMessage(first subscribe): %v", err)
+				return
+			}
+			firstConnSub <- payload
+			_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "bye"), time.Now().Add(time.Second))
+		case 2:
+			_, payload, err := conn.ReadMessage()
+			if err != nil {
+				t.Errorf("ReadMessage(replayed subscribe): %v", err)
+				return
+			}
+			secondConnSub <- payload
+			if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"update","symbol":"btcusdt","timestamp":2}`)); err != nil {
+				t.Errorf("WriteMessage(post-reconnect): %v", err)
+				return
+			}
+
+			for {
+				if _, _, err := conn.ReadMessage(); err != nil {
+					return
+				}
+			}
+		default:
+			t.Errorf("unexpected extra connection: %d", conns.Load())
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := NewClient(ClientConfig{
+		URL:              "ws" + srv.URL[len("http"):],
+		Reconnect:        true,
+		ReconnectBackoff: 10 * time.Millisecond,
+		PingInterval:     0,
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	if err := c.Connect(ctx); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	sub := map[string]any{"type": "subscribe", "channel": "test", "symbol": "btcusdt"}
+	b, err := json.Marshal(sub)
+	if err != nil {
+		t.Fatalf("marshal subscribe: %v", err)
+	}
+
+	c.TrackSubscription("sub:test:btcusdt", b)
+	if err := c.Write(ctx, b); err != nil {
+		t.Fatalf("Write subscribe: %v", err)
+	}
+
+	select {
+	case <-firstConnSub:
+	case <-ctx.Done():
+		t.Fatalf("timeout waiting first subscribe: %v", ctx.Err())
+	}
+	select {
+	case <-secondConnSub:
+	case <-ctx.Done():
+		t.Fatalf("timeout waiting replayed subscribe: %v", ctx.Err())
+	}
+
+	got, err := c.Read(ctx)
+	if err != nil {
+		t.Fatalf("Read post-reconnect: %v", err)
+	}
+	if string(got) != `{"type":"update","symbol":"btcusdt","timestamp":2}` {
+		t.Fatalf("unexpected post-reconnect payload: %s", string(got))
+	}
+}
+
 func TestClient_Reconnect_DoesNotReplayUntrackedSubscriptions(t *testing.T) {
 	t.Parallel()
 

@@ -101,12 +101,17 @@ func (c *Client) Subscribe(ctx context.Context, req SubscribeRequest) error {
 	if err != nil {
 		return err
 	}
-	filters := fmt.Sprintf(`{"symbol":"%s"}`, keySymbol) // API expects this as a JSON string, not an object.
+	topic, filters := topicAndFilter(ch, keySymbol)
 
 	payload := subscribePayload{
-		Type:    "subscribe",
-		Channel: string(ch),
-		Filters: filters,
+		Action: "subscribe",
+		Subscriptions: []subscription{
+			{
+				Topic:   topic,
+				Type:    "update",
+				Filters: filters,
+			},
+		},
 	}
 
 	key := subscriptionKey(ch, keySymbol)
@@ -129,12 +134,17 @@ func (c *Client) Unsubscribe(ctx context.Context, req UnsubscribeRequest) error 
 	if err != nil {
 		return err
 	}
-	filters := fmt.Sprintf(`{"symbol":"%s"}`, keySymbol) // API expects this as a JSON string, not an object.
+	topic, filters := topicAndFilter(ch, keySymbol)
 
 	payload := subscribePayload{
-		Type:    "unsubscribe",
-		Channel: string(ch),
-		Filters: filters,
+		Action: "unsubscribe",
+		Subscriptions: []subscription{
+			{
+				Topic:   topic,
+				Type:    "update",
+				Filters: filters,
+			},
+		},
 	}
 
 	key := subscriptionKey(ch, keySymbol)
@@ -182,9 +192,27 @@ func (c *Client) ReadMessage(ctx context.Context) (Message, error) {
 }
 
 type subscribePayload struct {
+	Action        string         `json:"action"`
+	Subscriptions []subscription `json:"subscriptions"`
+}
+
+type subscription struct {
+	Topic   string `json:"topic"`
 	Type    string `json:"type"`
-	Channel string `json:"channel"`
 	Filters string `json:"filters"`
+}
+
+func topicAndFilter(ch Channel, keySymbol string) (string, string) {
+	switch ch {
+	case ChannelCrypto:
+		// RTDS crypto topic expects filters as a JSON string.
+		return "crypto_prices", fmt.Sprintf(`{"symbol":"%s"}`, keySymbol)
+	case ChannelEquity:
+		// RTDS equity topic expects filters as a JSON string.
+		return "equity_prices", fmt.Sprintf(`{"symbol":"%s"}`, keySymbol)
+	default:
+		return string(ch), keySymbol
+	}
 }
 
 func subscriptionKey(ch Channel, keySymbol string) string {

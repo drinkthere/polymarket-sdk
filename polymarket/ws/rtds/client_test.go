@@ -63,11 +63,23 @@ func TestClient_SubscribeCrypto_BTC_UsesStringFilter(t *testing.T) {
 	if err := json.Unmarshal(payload, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if got["type"] != "subscribe" || got["channel"] != "crypto" {
-		t.Fatalf("unexpected subscribe envelope: %v", got)
+	if got["action"] != "subscribe" {
+		t.Fatalf("unexpected subscribe action: %v", got)
 	}
-	if got["filters"] != `{"symbol":"btcusdt"}` {
-		t.Fatalf("expected filters JSON string, got %T %v", got["filters"], got["filters"])
+
+	subscriptions, ok := got["subscriptions"].([]any)
+	if !ok || len(subscriptions) != 1 {
+		t.Fatalf("expected exactly one subscription, got %T %v", got["subscriptions"], got["subscriptions"])
+	}
+	sub, ok := subscriptions[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected subscription object, got %T", subscriptions[0])
+	}
+	if sub["topic"] != "crypto_prices" || sub["type"] != "update" {
+		t.Fatalf("unexpected crypto subscription: %v", sub)
+	}
+	if sub["filters"] != `{"symbol":"btcusdt"}` {
+		t.Fatalf("expected crypto filter JSON string, got %T %v", sub["filters"], sub["filters"])
 	}
 }
 
@@ -151,22 +163,44 @@ func TestClient_Subscribe_Unsubscribe_Read(t *testing.T) {
 	if err := json.Unmarshal(subPayload, &sub); err != nil {
 		t.Fatalf("unmarshal subscribe: %v", err)
 	}
-	if sub["type"] != "subscribe" || sub["channel"] != "crypto" {
-		t.Fatalf("unexpected subscribe envelope: %v", sub)
+	if sub["action"] != "subscribe" {
+		t.Fatalf("unexpected subscribe action: %v", sub)
 	}
-	if sub["filters"] != `{"symbol":"btcusdt"}` {
-		t.Fatalf("expected filters JSON string, got %T %v", sub["filters"], sub["filters"])
+	subscriptions, ok := sub["subscriptions"].([]any)
+	if !ok || len(subscriptions) != 1 {
+		t.Fatalf("expected exactly one subscription, got %T %v", sub["subscriptions"], sub["subscriptions"])
+	}
+	subscribeReq, ok := subscriptions[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected subscription object, got %T", subscriptions[0])
+	}
+	if subscribeReq["topic"] != "crypto_prices" || subscribeReq["type"] != "update" {
+		t.Fatalf("unexpected subscribe request: %v", subscribeReq)
+	}
+	if subscribeReq["filters"] != `{"symbol":"btcusdt"}` {
+		t.Fatalf("expected crypto filter JSON string, got %T %v", subscribeReq["filters"], subscribeReq["filters"])
 	}
 
 	var unsub map[string]any
 	if err := json.Unmarshal(unsubPayload, &unsub); err != nil {
 		t.Fatalf("unmarshal unsubscribe: %v", err)
 	}
-	if unsub["type"] != "unsubscribe" || unsub["channel"] != "crypto" {
-		t.Fatalf("unexpected unsubscribe envelope: %v", unsub)
+	if unsub["action"] != "unsubscribe" {
+		t.Fatalf("unexpected unsubscribe action: %v", unsub)
 	}
-	if unsub["filters"] != `{"symbol":"btcusdt"}` {
-		t.Fatalf("expected filters JSON string, got %T %v", unsub["filters"], unsub["filters"])
+	unsubSubscriptions, ok := unsub["subscriptions"].([]any)
+	if !ok || len(unsubSubscriptions) != 1 {
+		t.Fatalf("expected exactly one unsubscribe subscription, got %T %v", unsub["subscriptions"], unsub["subscriptions"])
+	}
+	unsubscribeReq, ok := unsubSubscriptions[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected unsubscribe object, got %T", unsubSubscriptions[0])
+	}
+	if unsubscribeReq["topic"] != "crypto_prices" || unsubscribeReq["type"] != "update" {
+		t.Fatalf("unexpected unsubscribe request: %v", unsubscribeReq)
+	}
+	if unsubscribeReq["filters"] != `{"symbol":"btcusdt"}` {
+		t.Fatalf("expected crypto filter JSON string, got %T %v", unsubscribeReq["filters"], unsubscribeReq["filters"])
 	}
 }
 
@@ -220,11 +254,22 @@ func TestClient_SubscribeItem_Equity_UsesUppercaseSymbol(t *testing.T) {
 	if err := json.Unmarshal(payload, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if got["type"] != "subscribe" || got["channel"] != "equity" {
-		t.Fatalf("unexpected subscribe envelope: %v", got)
+	if got["action"] != "subscribe" {
+		t.Fatalf("unexpected subscribe action: %v", got)
 	}
-	if got["filters"] != `{"symbol":"SPY"}` {
-		t.Fatalf("expected filters JSON string, got %T %v", got["filters"], got["filters"])
+	subscriptions, ok := got["subscriptions"].([]any)
+	if !ok || len(subscriptions) != 1 {
+		t.Fatalf("expected exactly one subscription, got %T %v", got["subscriptions"], got["subscriptions"])
+	}
+	sub, ok := subscriptions[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected subscription object, got %T", subscriptions[0])
+	}
+	if sub["topic"] != "equity_prices" || sub["type"] != "update" {
+		t.Fatalf("unexpected equity subscription: %v", sub)
+	}
+	if sub["filters"] != `{"symbol":"SPY"}` {
+		t.Fatalf("expected equity filter JSON string, got %T %v", sub["filters"], sub["filters"])
 	}
 }
 
