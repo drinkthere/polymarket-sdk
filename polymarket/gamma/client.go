@@ -62,28 +62,29 @@ func (c *Client) GetSettlementBySlug(ctx context.Context, slug string) (Outcome,
 	if err := json.Unmarshal(payload, &events); err != nil {
 		return OutcomeUnsettled, decodeError(settlementBySlugOp, payload, err)
 	}
-
-	for _, evt := range events {
-		for _, mkt := range evt.Markets {
-			if !mkt.Closed {
-				return OutcomeUnsettled, nil
-			}
-		}
+	if len(events) != 1 {
+		return OutcomeUnsettled, protocolError(settlementBySlugOp, "expected exactly one event")
 	}
 
-	for _, evt := range events {
-		for _, mkt := range evt.Markets {
-			var prices []string
-			if err := json.Unmarshal([]byte(mkt.OutcomePrices), &prices); err != nil {
-				return OutcomeUnsettled, decodeError(settlementBySlugOp, []byte(mkt.OutcomePrices), err)
-			}
-			if len(prices) == 2 && prices[0] == "1" && prices[1] == "0" {
-				return OutcomeYes, nil
-			}
-			if len(prices) == 2 && prices[0] == "0" && prices[1] == "1" {
-				return OutcomeNo, nil
-			}
-		}
+	event := events[0]
+	if len(event.Markets) != 1 {
+		return OutcomeUnsettled, protocolError(settlementBySlugOp, "expected exactly one market")
+	}
+
+	market := event.Markets[0]
+	if !market.Closed {
+		return OutcomeUnsettled, nil
+	}
+
+	var prices []string
+	if err := json.Unmarshal([]byte(market.OutcomePrices), &prices); err != nil {
+		return OutcomeUnsettled, decodeError(settlementBySlugOp, []byte(market.OutcomePrices), err)
+	}
+	if len(prices) == 2 && prices[0] == "1" && prices[1] == "0" {
+		return OutcomeYes, nil
+	}
+	if len(prices) == 2 && prices[0] == "0" && prices[1] == "1" {
+		return OutcomeNo, nil
 	}
 
 	return OutcomeUnsettled, nil
@@ -97,5 +98,14 @@ func decodeError(op string, rawBody []byte, err error) error {
 		Message: err.Error(),
 		Cause:   err,
 		RawBody: rawBody,
+	}
+}
+
+func protocolError(op string, message string) error {
+	return &polyerrors.Error{
+		Kind:    polyerrors.ErrProtocol,
+		Op:      op,
+		Method:  http.MethodGet,
+		Message: message,
 	}
 }
