@@ -77,10 +77,10 @@ func (c *Client) GetSettlementBySlug(ctx context.Context, slug string) (Outcome,
 			if err := json.Unmarshal([]byte(mkt.OutcomePrices), &prices); err != nil {
 				return OutcomeUnsettled, decodeError(settlementBySlugOp, []byte(mkt.OutcomePrices), err)
 			}
-			if len(prices) > 0 && prices[0] == "1" {
+			if len(prices) == 2 && prices[0] == "1" && prices[1] == "0" {
 				return OutcomeYes, nil
 			}
-			if len(prices) > 1 && prices[1] == "1" {
+			if len(prices) == 2 && prices[0] == "0" && prices[1] == "1" {
 				return OutcomeNo, nil
 			}
 		}

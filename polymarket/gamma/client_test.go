@@ -3,6 +3,7 @@ package gamma
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -71,6 +72,44 @@ func TestGetSettlementBySlugReturnsOutcomeUnsettledIfAnyLaterMarketIsOpen(t *tes
 	}
 	if outcome != OutcomeUnsettled {
 		t.Fatalf("expected OutcomeUnsettled, got %q", outcome)
+	}
+}
+
+func TestGetSettlementBySlugReturnsOutcomeUnsettledForNonExactWinningArrays(t *testing.T) {
+	tests := []struct {
+		name          string
+		outcomePrices string
+	}{
+		{name: "both_sides_one", outcomePrices: `["1","1"]`},
+		{name: "single_side_only", outcomePrices: `["1"]`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, fmt.Sprintf(`[{"markets":[{"closed":true,"outcomePrices":%q}]}]`, tt.outcomePrices))
+			}))
+			defer server.Close()
+
+			httpClient, err := httpx.New(httpx.ClientConfig{BaseURL: server.URL, Timeout: time.Second})
+			if err != nil {
+				t.Fatalf("httpx.New() error: %v", err)
+			}
+
+			client, err := NewClient(httpClient)
+			if err != nil {
+				t.Fatalf("NewClient() error: %v", err)
+			}
+
+			outcome, err := client.GetSettlementBySlug(context.Background(), "non-exact")
+			if err != nil {
+				t.Fatalf("GetSettlementBySlug() error: %v", err)
+			}
+			if outcome != OutcomeUnsettled {
+				t.Fatalf("expected OutcomeUnsettled, got %q", outcome)
+			}
+		})
 	}
 }
 
