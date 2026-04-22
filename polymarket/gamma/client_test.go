@@ -152,7 +152,41 @@ func TestGetSettlementBySlugReturnsTypedProtocolErrorForMultipleEvents(t *testin
 	}
 }
 
-func TestGetSettlementBySlugReturnsTypedProtocolErrorForMultipleMarkets(t *testing.T) {
+func TestGetSettlementBySlugReturnsTypedProtocolErrorForZeroMarkets(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `[{"markets":[]}]`)
+	}))
+	defer server.Close()
+
+	httpClient, err := httpx.New(httpx.ClientConfig{BaseURL: server.URL, Timeout: time.Second})
+	if err != nil {
+		t.Fatalf("httpx.New() error: %v", err)
+	}
+
+	client, err := NewClient(httpClient)
+	if err != nil {
+		t.Fatalf("NewClient() error: %v", err)
+	}
+
+	_, err = client.GetSettlementBySlug(context.Background(), "no-markets")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var typed *polyerrors.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected *errors.Error, got %T", err)
+	}
+	if typed.Kind != polyerrors.ErrProtocol {
+		t.Fatalf("expected ErrProtocol, got %v", typed.Kind)
+	}
+	if typed.Op != "gamma.settlement_by_slug" {
+		t.Fatalf("unexpected op: %q", typed.Op)
+	}
+}
+
+func TestGetSettlementBySlugReturnsOutcomeUnsettledForOpenMultiMarketEvent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `[{"markets":[{"closed":true,"outcomePrices":"[\"1\",\"0\"]"},{"closed":false,"outcomePrices":"[\"0\",\"1\"]"}]}]`)
@@ -169,7 +203,33 @@ func TestGetSettlementBySlugReturnsTypedProtocolErrorForMultipleMarkets(t *testi
 		t.Fatalf("NewClient() error: %v", err)
 	}
 
-	_, err = client.GetSettlementBySlug(context.Background(), "multi-market")
+	outcome, err := client.GetSettlementBySlug(context.Background(), "open-multi-market")
+	if err != nil {
+		t.Fatalf("GetSettlementBySlug() error: %v", err)
+	}
+	if outcome != OutcomeUnsettled {
+		t.Fatalf("expected OutcomeUnsettled, got %q", outcome)
+	}
+}
+
+func TestGetSettlementBySlugReturnsTypedProtocolErrorForMultipleClosedMarkets(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `[{"markets":[{"closed":true,"outcomePrices":"[\"1\",\"0\"]"},{"closed":true,"outcomePrices":"[\"0\",\"1\"]"}]}]`)
+	}))
+	defer server.Close()
+
+	httpClient, err := httpx.New(httpx.ClientConfig{BaseURL: server.URL, Timeout: time.Second})
+	if err != nil {
+		t.Fatalf("httpx.New() error: %v", err)
+	}
+
+	client, err := NewClient(httpClient)
+	if err != nil {
+		t.Fatalf("NewClient() error: %v", err)
+	}
+
+	_, err = client.GetSettlementBySlug(context.Background(), "closed-multi-market")
 	if err == nil {
 		t.Fatal("expected error")
 	}

@@ -67,15 +67,21 @@ func (c *Client) GetSettlementBySlug(ctx context.Context, slug string) (Outcome,
 	}
 
 	event := events[0]
+	if len(event.Markets) == 0 {
+		return OutcomeUnsettled, protocolError(settlementBySlugOp, "expected at least one market")
+	}
+
+	for _, market := range event.Markets {
+		if !market.Closed {
+			return OutcomeUnsettled, nil
+		}
+	}
+
 	if len(event.Markets) != 1 {
-		return OutcomeUnsettled, protocolError(settlementBySlugOp, "expected exactly one market")
+		return OutcomeUnsettled, protocolError(settlementBySlugOp, "expected exactly one closed market")
 	}
 
 	market := event.Markets[0]
-	if !market.Closed {
-		return OutcomeUnsettled, nil
-	}
-
 	var prices []string
 	if err := json.Unmarshal([]byte(market.OutcomePrices), &prices); err != nil {
 		return OutcomeUnsettled, decodeError(settlementBySlugOp, []byte(market.OutcomePrices), err)
