@@ -84,7 +84,7 @@ func TestGetSettlementBySlugReturnsOutcomeNo(t *testing.T) {
 	}
 }
 
-func TestGetSettlementBySlugReturnsTypedProtocolErrorForZeroEvents(t *testing.T) {
+func TestGetSettlementBySlugReturnsOutcomeUnsettledForZeroEvents(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `[]`)
@@ -101,24 +101,16 @@ func TestGetSettlementBySlugReturnsTypedProtocolErrorForZeroEvents(t *testing.T)
 		t.Fatalf("NewClient() error: %v", err)
 	}
 
-	_, err = client.GetSettlementBySlug(context.Background(), "missing")
-	if err == nil {
-		t.Fatal("expected error")
+	outcome, err := client.GetSettlementBySlug(context.Background(), "missing")
+	if err != nil {
+		t.Fatalf("GetSettlementBySlug() error: %v", err)
 	}
-
-	var typed *polyerrors.Error
-	if !errors.As(err, &typed) {
-		t.Fatalf("expected *errors.Error, got %T", err)
-	}
-	if typed.Kind != polyerrors.ErrProtocol {
-		t.Fatalf("expected ErrProtocol, got %v", typed.Kind)
-	}
-	if typed.Op != "gamma.settlement_by_slug" {
-		t.Fatalf("unexpected op: %q", typed.Op)
+	if outcome != OutcomeUnsettled {
+		t.Fatalf("expected OutcomeUnsettled, got %q", outcome)
 	}
 }
 
-func TestGetSettlementBySlugReturnsTypedProtocolErrorForMultipleEvents(t *testing.T) {
+func TestGetSettlementBySlugReturnsOutcomeUnsettledForMultipleEvents(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `[{"markets":[{"closed":true,"outcomePrices":"[\"1\",\"0\"]"}]},{"markets":[{"closed":true,"outcomePrices":"[\"0\",\"1\"]"}]}]`)
@@ -135,24 +127,16 @@ func TestGetSettlementBySlugReturnsTypedProtocolErrorForMultipleEvents(t *testin
 		t.Fatalf("NewClient() error: %v", err)
 	}
 
-	_, err = client.GetSettlementBySlug(context.Background(), "duplicate")
-	if err == nil {
-		t.Fatal("expected error")
+	outcome, err := client.GetSettlementBySlug(context.Background(), "duplicate")
+	if err != nil {
+		t.Fatalf("GetSettlementBySlug() error: %v", err)
 	}
-
-	var typed *polyerrors.Error
-	if !errors.As(err, &typed) {
-		t.Fatalf("expected *errors.Error, got %T", err)
-	}
-	if typed.Kind != polyerrors.ErrProtocol {
-		t.Fatalf("expected ErrProtocol, got %v", typed.Kind)
-	}
-	if typed.Op != "gamma.settlement_by_slug" {
-		t.Fatalf("unexpected op: %q", typed.Op)
+	if outcome != OutcomeUnsettled {
+		t.Fatalf("expected OutcomeUnsettled, got %q", outcome)
 	}
 }
 
-func TestGetSettlementBySlugReturnsTypedProtocolErrorForZeroMarkets(t *testing.T) {
+func TestGetSettlementBySlugReturnsOutcomeUnsettledForZeroMarkets(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `[{"markets":[]}]`)
@@ -169,20 +153,12 @@ func TestGetSettlementBySlugReturnsTypedProtocolErrorForZeroMarkets(t *testing.T
 		t.Fatalf("NewClient() error: %v", err)
 	}
 
-	_, err = client.GetSettlementBySlug(context.Background(), "no-markets")
-	if err == nil {
-		t.Fatal("expected error")
+	outcome, err := client.GetSettlementBySlug(context.Background(), "no-markets")
+	if err != nil {
+		t.Fatalf("GetSettlementBySlug() error: %v", err)
 	}
-
-	var typed *polyerrors.Error
-	if !errors.As(err, &typed) {
-		t.Fatalf("expected *errors.Error, got %T", err)
-	}
-	if typed.Kind != polyerrors.ErrProtocol {
-		t.Fatalf("expected ErrProtocol, got %v", typed.Kind)
-	}
-	if typed.Op != "gamma.settlement_by_slug" {
-		t.Fatalf("unexpected op: %q", typed.Op)
+	if outcome != OutcomeUnsettled {
+		t.Fatalf("expected OutcomeUnsettled, got %q", outcome)
 	}
 }
 
@@ -212,7 +188,7 @@ func TestGetSettlementBySlugReturnsOutcomeUnsettledForOpenMultiMarketEvent(t *te
 	}
 }
 
-func TestGetSettlementBySlugReturnsTypedProtocolErrorForMultipleClosedMarkets(t *testing.T) {
+func TestGetSettlementBySlugReturnsOutcomeUnsettledForMultipleClosedMarkets(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `[{"markets":[{"closed":true,"outcomePrices":"[\"1\",\"0\"]"},{"closed":true,"outcomePrices":"[\"0\",\"1\"]"}]}]`)
@@ -229,20 +205,12 @@ func TestGetSettlementBySlugReturnsTypedProtocolErrorForMultipleClosedMarkets(t 
 		t.Fatalf("NewClient() error: %v", err)
 	}
 
-	_, err = client.GetSettlementBySlug(context.Background(), "closed-multi-market")
-	if err == nil {
-		t.Fatal("expected error")
+	outcome, err := client.GetSettlementBySlug(context.Background(), "closed-multi-market")
+	if err != nil {
+		t.Fatalf("GetSettlementBySlug() error: %v", err)
 	}
-
-	var typed *polyerrors.Error
-	if !errors.As(err, &typed) {
-		t.Fatalf("expected *errors.Error, got %T", err)
-	}
-	if typed.Kind != polyerrors.ErrProtocol {
-		t.Fatalf("expected ErrProtocol, got %v", typed.Kind)
-	}
-	if typed.Op != "gamma.settlement_by_slug" {
-		t.Fatalf("unexpected op: %q", typed.Op)
+	if outcome != OutcomeUnsettled {
+		t.Fatalf("expected OutcomeUnsettled, got %q", outcome)
 	}
 }
 

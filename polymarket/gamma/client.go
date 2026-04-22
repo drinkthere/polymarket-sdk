@@ -63,12 +63,12 @@ func (c *Client) GetSettlementBySlug(ctx context.Context, slug string) (Outcome,
 		return OutcomeUnsettled, decodeError(settlementBySlugOp, payload, err)
 	}
 	if len(events) != 1 {
-		return OutcomeUnsettled, protocolError(settlementBySlugOp, "expected exactly one event")
+		return OutcomeUnsettled, nil
 	}
 
 	event := events[0]
 	if len(event.Markets) == 0 {
-		return OutcomeUnsettled, protocolError(settlementBySlugOp, "expected at least one market")
+		return OutcomeUnsettled, nil
 	}
 
 	for _, market := range event.Markets {
@@ -78,7 +78,7 @@ func (c *Client) GetSettlementBySlug(ctx context.Context, slug string) (Outcome,
 	}
 
 	if len(event.Markets) != 1 {
-		return OutcomeUnsettled, protocolError(settlementBySlugOp, "expected exactly one closed market")
+		return OutcomeUnsettled, nil
 	}
 
 	market := event.Markets[0]
@@ -104,14 +104,5 @@ func decodeError(op string, rawBody []byte, err error) error {
 		Message: err.Error(),
 		Cause:   err,
 		RawBody: rawBody,
-	}
-}
-
-func protocolError(op string, message string) error {
-	return &polyerrors.Error{
-		Kind:    polyerrors.ErrProtocol,
-		Op:      op,
-		Method:  http.MethodGet,
-		Message: message,
 	}
 }
