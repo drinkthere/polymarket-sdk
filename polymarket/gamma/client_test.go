@@ -48,6 +48,32 @@ func TestGetSettlementBySlugReturnsOutcomeYes(t *testing.T) {
 	}
 }
 
+func TestGetSettlementBySlugReturnsOutcomeUnsettledIfAnyLaterMarketIsOpen(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `[{"markets":[{"closed":true,"outcomePrices":"[\"1\",\"0\"]"},{"closed":false,"outcomePrices":"[\"0\",\"1\"]"}]}]`)
+	}))
+	defer server.Close()
+
+	httpClient, err := httpx.New(httpx.ClientConfig{BaseURL: server.URL, Timeout: time.Second})
+	if err != nil {
+		t.Fatalf("httpx.New() error: %v", err)
+	}
+
+	client, err := NewClient(httpClient)
+	if err != nil {
+		t.Fatalf("NewClient() error: %v", err)
+	}
+
+	outcome, err := client.GetSettlementBySlug(context.Background(), "mixed-closure")
+	if err != nil {
+		t.Fatalf("GetSettlementBySlug() error: %v", err)
+	}
+	if outcome != OutcomeUnsettled {
+		t.Fatalf("expected OutcomeUnsettled, got %q", outcome)
+	}
+}
+
 func TestNewClientNilTransportReturnsTypedRequestBuildError(t *testing.T) {
 	_, err := NewClient(nil)
 	if err == nil {
