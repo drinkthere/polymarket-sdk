@@ -35,6 +35,7 @@ type Request struct {
 	Path   string
 	Query  url.Values
 	Body   any
+	Header http.Header
 }
 
 const (
@@ -172,6 +173,11 @@ func (c *Client) DoJSON(ctx context.Context, req Request) ([]byte, error) {
 	}
 	if req.Body != nil {
 		httpReq.Header.Set("Content-Type", "application/json")
+	}
+	for key, values := range req.Header {
+		for _, value := range values {
+			httpReq.Header.Add(key, value)
+		}
 	}
 
 	resp, err := c.httpClient.Do(httpReq)

@@ -8,6 +8,19 @@ import (
 type Config struct {
 	FunderAddress string
 	PrivateKey    string
+	ChainID       int
+	SignatureType int
+	APIKey        string
+	APISecret     string
+	APIPassphrase string
+}
+
+func (c Config) APICredentials() APICredentials {
+	return APICredentials{
+		Key:        c.APIKey,
+		Secret:     c.APISecret,
+		Passphrase: c.APIPassphrase,
+	}
 }
 
 func (c Config) Validate() error {
@@ -19,4 +32,3 @@ func (c Config) Validate() error {
 	}
 	return nil
 }
-

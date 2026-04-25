@@ -2,8 +2,10 @@ package orders
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	polyauth "github.com/drinkthere/polymarket-sdk/polymarket/auth"
@@ -56,14 +58,214 @@ func TestNewClientReturnsClientForValidInputs(t *testing.T) {
 	httpClient := newTestHTTPClient(t)
 
 	client, err := NewClient(httpClient, polyauth.Config{
-		FunderAddress: "0x1111111111111111111111111111111111111111",
-		PrivateKey:    "0xabc123",
+		FunderAddress: "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+		PrivateKey:    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+		ChainID:       80002,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if client == nil {
 		t.Fatal("expected client")
+	}
+}
+
+func TestClientCreateOrDeriveAPIKeyDelegatesToAuth(t *testing.T) {
+	var createCalls, deriveCalls int
+
+	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/auth/api-key":
+			createCalls++
+			_, _ = io.WriteString(w, `{}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/auth/derive-api-key":
+			deriveCalls++
+			_, _ = io.WriteString(w, `{"apiKey":"key-1","secret":"secret-1","passphrase":"pass-1"}`)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	client, err := NewClient(httpClient, validAuthConfig())
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	creds, err := client.CreateOrDeriveAPIKey(t.Context(), 0)
+	if err != nil {
+		t.Fatalf("CreateOrDeriveAPIKey() error = %v", err)
+	}
+	if creds.Key != "key-1" || creds.Secret != "secret-1" || creds.Passphrase != "pass-1" {
+		t.Fatalf("unexpected creds: %+v", creds)
+	}
+	if createCalls != 1 || deriveCalls != 1 {
+		t.Fatalf("unexpected auth calls: create=%d derive=%d", createCalls, deriveCalls)
+	}
+}
+
+func TestGetOpenOrdersPaginatesAndSignsRequests(t *testing.T) {
+	var calls int
+
+	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/data/orders" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("POLY_API_KEY"); got != "key-1" {
+			t.Fatalf("POLY_API_KEY = %q", got)
+		}
+		if got := r.Header.Get("POLY_SIGNATURE"); got == "" {
+			t.Fatal("expected POLY_SIGNATURE header")
+		}
+		if got := r.URL.Query().Get("market"); got != "market-1" {
+			t.Fatalf("market = %q", got)
+		}
+
+		calls++
+		switch calls {
+		case 1:
+			if got := r.URL.Query().Get("next_cursor"); got != "MA==" {
+				t.Fatalf("next_cursor = %q", got)
+			}
+			_, _ = io.WriteString(w, `{"data":[{"id":"ord-1","status":"LIVE","owner":"owner-1","maker_address":"maker-1","market":"market-1","asset_id":"asset-1","side":"BUY","original_size":"5","size_matched":"1","price":"0.42","associate_trades":["trade-1"],"outcome":"Yes","created_at":1,"expiration":"10","order_type":"GTC"}],"next_cursor":"MQ=="}`)
+		case 2:
+			if got := r.URL.Query().Get("next_cursor"); got != "MQ==" {
+				t.Fatalf("next_cursor = %q", got)
+			}
+			_, _ = io.WriteString(w, `{"data":[{"id":"ord-2","status":"LIVE","owner":"owner-1","maker_address":"maker-1","market":"market-1","asset_id":"asset-2","side":"SELL","original_size":"3","size_matched":"0","price":"0.55","associate_trades":[],"outcome":"No","created_at":2,"expiration":"11","order_type":"GTC"}],"next_cursor":"LTE="}`)
+		default:
+			t.Fatalf("unexpected call count: %d", calls)
+		}
+	}))
+
+	client, err := NewClient(httpClient, validAuthConfig())
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	got, err := client.GetOpenOrders(t.Context(), GetOpenOrdersRequest{
+		Credentials: validCreds(),
+		Market:      "market-1",
+	})
+	if err != nil {
+		t.Fatalf("GetOpenOrders() error = %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len(GetOpenOrders()) = %d, want 2", len(got))
+	}
+	if got[0].ID != "ord-1" || got[1].ID != "ord-2" {
+		t.Fatalf("unexpected open orders: %+v", got)
+	}
+}
+
+func TestPlaceMakerOrderPostsTypedPayload(t *testing.T) {
+	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/order" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll() error = %v", err)
+		}
+		text := string(body)
+		for _, needle := range []string{
+			`"owner":"key-1"`,
+			`"orderType":"GTC"`,
+			`"tokenId":"asset-1"`,
+			`"signature":"0xsig"`,
+		} {
+			if !strings.Contains(text, needle) {
+				t.Fatalf("request body missing %s: %s", needle, text)
+			}
+		}
+		if got := r.Header.Get("POLY_PASSPHRASE"); got != "pass-1" {
+			t.Fatalf("POLY_PASSPHRASE = %q", got)
+		}
+		_, _ = io.WriteString(w, `{"success":true,"errorMsg":"","orderID":"ord-1","transactionsHashes":["0xtx"],"status":"LIVE","takingAmount":"21","makingAmount":"50"}`)
+	}))
+
+	client, err := NewClient(httpClient, validAuthConfig())
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	got, err := client.PlaceMakerOrder(t.Context(), PlaceMakerOrderRequest{
+		Credentials: validCreds(),
+		Owner:       "key-1",
+		OrderType:   OrderTypeGTC,
+		Order: MakerOrder{
+			Salt:          1,
+			Maker:         "0xmaker",
+			Signer:        "0xsigner",
+			Taker:         "0x0000000000000000000000000000000000000000",
+			TokenID:       "asset-1",
+			MakerAmount:   "50",
+			TakerAmount:   "21",
+			Side:          SideBuy,
+			Expiration:    "9999999999",
+			Nonce:         7,
+			FeeRateBps:    0,
+			SignatureType: 0,
+			Signature:     "0xsig",
+		},
+	})
+	if err != nil {
+		t.Fatalf("PlaceMakerOrder() error = %v", err)
+	}
+	if !got.Success || got.OrderID != "ord-1" {
+		t.Fatalf("unexpected response: %+v", got)
+	}
+}
+
+func TestCancelOrderAndCancelAllOrders(t *testing.T) {
+	var cancelOrderCalls, cancelAllCalls int
+
+	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodDelete && r.URL.Path == "/order":
+			cancelOrderCalls++
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("ReadAll() error = %v", err)
+			}
+			if string(body) != `{"orderID":"ord-1"}` {
+				t.Fatalf("unexpected cancel body: %s", string(body))
+			}
+			_, _ = io.WriteString(w, `{"canceled":["ord-1"]}`)
+		case r.Method == http.MethodDelete && r.URL.Path == "/cancel-all":
+			cancelAllCalls++
+			_, _ = io.WriteString(w, `{"canceled":["ord-1","ord-2"]}`)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	client, err := NewClient(httpClient, validAuthConfig())
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	cancelOne, err := client.CancelOrder(t.Context(), CancelOrderRequest{
+		Credentials: validCreds(),
+		OrderID:     "ord-1",
+	})
+	if err != nil {
+		t.Fatalf("CancelOrder() error = %v", err)
+	}
+	if len(cancelOne.Canceled) != 1 || cancelOne.Canceled[0] != "ord-1" {
+		t.Fatalf("unexpected cancel response: %+v", cancelOne)
+	}
+
+	cancelAll, err := client.CancelAllOrders(t.Context(), CancelAllOrdersRequest{
+		Credentials: validCreds(),
+	})
+	if err != nil {
+		t.Fatalf("CancelAllOrders() error = %v", err)
+	}
+	if len(cancelAll.Canceled) != 2 {
+		t.Fatalf("unexpected cancel-all response: %+v", cancelAll)
+	}
+	if cancelOrderCalls != 1 || cancelAllCalls != 1 {
+		t.Fatalf("unexpected call counts: cancelOrder=%d cancelAll=%d", cancelOrderCalls, cancelAllCalls)
 	}
 }
 
@@ -78,4 +280,33 @@ func newTestHTTPClient(t *testing.T) *httpx.Client {
 		t.Fatalf("httpx.New() error: %v", err)
 	}
 	return client
+}
+
+func newHTTPClientWithServer(t *testing.T, handler http.Handler) *httpx.Client {
+	t.Helper()
+
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	client, err := httpx.New(httpx.ClientConfig{BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("httpx.New() error: %v", err)
+	}
+	return client
+}
+
+func validAuthConfig() polyauth.Config {
+	return polyauth.Config{
+		FunderAddress: "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+		PrivateKey:    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+		ChainID:       80002,
+	}
+}
+
+func validCreds() polyauth.APICredentials {
+	return polyauth.APICredentials{
+		Key:        "key-1",
+		Secret:     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+		Passphrase: "pass-1",
+	}
 }
