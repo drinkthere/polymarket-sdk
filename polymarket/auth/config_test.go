@@ -87,7 +87,7 @@ func TestNewSignerBuildsStableHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateL2Headers() error = %v", err)
 	}
-	if l2.POLY_SIGNATURE != "ZwAdJKvoYRlEKDkNMwd5BuwNNtg93kNaR_oU2HrfVvc=" {
+	if l2.POLY_SIGNATURE != "4gJVbox-R6XlDK4nlaicig0_ANVL1qdcahiL8CXfXLM=" {
 		t.Fatalf("POLY_SIGNATURE = %q", l2.POLY_SIGNATURE)
 	}
 	if l2.POLY_API_KEY != "key-1" {

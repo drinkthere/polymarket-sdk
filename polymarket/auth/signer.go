@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"math"
 	"math/big"
@@ -199,7 +200,7 @@ func (s *Signer) CreateL2Headers(creds APICredentials, args L2HeaderArgs, at tim
 	}
 
 	ts := strconv.FormatInt(at.Unix(), 10)
-	message := ts + args.Method + args.RequestPath + args.Body
+	message := ts + args.Method + args.RequestPath + canonicalizeBody(args.Body)
 
 	mac := hmac.New(sha256.New, secretBytes)
 	_, _ = mac.Write([]byte(message))
@@ -374,6 +375,24 @@ func decodeSecret(secret string) ([]byte, error) {
 		return decoded, nil
 	}
 	return nil, fmt.Errorf("decode api secret: %w", err)
+}
+
+func canonicalizeBody(body string) string {
+	trimmed := strings.TrimSpace(body)
+	if trimmed == "" {
+		return ""
+	}
+
+	var payload any
+	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
+		return body
+	}
+
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return body
+	}
+	return string(encoded)
 }
 
 func hashString(s string) common.Hash {
