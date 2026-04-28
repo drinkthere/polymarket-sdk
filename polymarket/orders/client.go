@@ -126,11 +126,6 @@ func (c *Client) PlaceMakerOrder(ctx context.Context, req PlaceMakerOrderRequest
 	if owner == "" {
 		owner = creds.Key
 	}
-	postOnly := true
-	if req.PostOnly {
-		postOnly = true
-	}
-
 	payload := struct {
 		Order     MakerOrder `json:"order"`
 		Owner     string     `json:"owner"`
@@ -142,7 +137,7 @@ func (c *Client) PlaceMakerOrder(ctx context.Context, req PlaceMakerOrderRequest
 		Owner:     owner,
 		OrderType: orderType,
 		DeferExec: req.DeferExec,
-		PostOnly:  postOnly,
+		PostOnly:  req.PostOnly,
 	}
 
 	bodyJSON, err := json.Marshal(payload)

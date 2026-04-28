@@ -29,7 +29,7 @@ func TestClientListMarketsBuildsRequestAndDecodesResponse(t *testing.T) {
 			t.Fatalf("unexpected pagination query: %s", q.Encode())
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `[{"id":"pm-1","slug":"btc-updown-5m-1","question":"BTC?","outcomes":["Yes","No"],"clobTokenIds":["tok-yes","tok-no"],"eventStartTime":"2026-04-14T13:00:00Z","endDate":"2026-04-14T13:05:00Z","createdAt":"2026-04-14T12:59:00Z"}]`)
+		_, _ = io.WriteString(w, `[{"id":"pm-1","conditionId":"cond-1","slug":"btc-updown-5m-1","question":"BTC?","description":"desc","outcomes":["Yes","No"],"outcomePrices":["0.52","0.48"],"clobTokenIds":["tok-yes","tok-no"],"eventStartTime":"2026-04-14T13:00:00Z","endDate":"2026-04-14T13:05:00Z","createdAt":"2026-04-14T12:59:00Z","active":true,"closed":false,"bestBid":0.51,"bestAsk":0.53,"spread":0.02}]`)
 	}))
 	defer server.Close()
 
@@ -51,6 +51,12 @@ func TestClientListMarketsBuildsRequestAndDecodesResponse(t *testing.T) {
 	}
 	if resp.Markets[0].ID != "pm-1" || resp.Markets[0].Slug != "btc-updown-5m-1" {
 		t.Fatalf("unexpected market: %+v", resp.Markets[0])
+	}
+	if resp.Markets[0].ConditionID != "cond-1" || resp.Markets[0].BestBid != 0.51 || resp.Markets[0].BestAsk != 0.53 || resp.Markets[0].Spread != 0.02 {
+		t.Fatalf("unexpected market fields: %+v", resp.Markets[0])
+	}
+	if string(resp.Markets[0].OutcomePrices) != `["0.52","0.48"]` {
+		t.Fatalf("unexpected outcome prices: %s", string(resp.Markets[0].OutcomePrices))
 	}
 }
 
@@ -142,6 +148,101 @@ func TestClientGetEventsBySlugReturnsTypedProtocolErrorForMissingIDs(t *testing.
 	}
 
 	_, err = client.GetEventsBySlug(context.Background(), "btc-updown-5m-1776171600")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var typed *polyerrors.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected *errors.Error, got %T", err)
+	}
+	if typed.Kind != polyerrors.ErrProtocol {
+		t.Fatalf("expected ErrProtocol, got %v", typed.Kind)
+	}
+}
+
+func TestClientGetClobMarketInfoBuildsRequestAndDecodesResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+		if r.URL.Path != "/markets/0xcond-1" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"condition_id":"0xcond-1","gst":"2026-04-28T12:00:00Z","r":{"min_size":100},"t":[{"t":"tok-yes","o":"Yes"},{"t":"tok-no","o":"No"}],"mos":5,"mts":0.01,"mbf":0,"tbf":125,"rfqe":false,"itode":true,"ibce":false,"fd":{"r":0.05,"e":1,"to":true},"oas":2}`)
+	}))
+	defer server.Close()
+
+	httpClient, err := httpx.New(httpx.ClientConfig{BaseURL: server.URL, Timeout: time.Second})
+	if err != nil {
+		t.Fatalf("httpx.New() error: %v", err)
+	}
+
+	client, err := NewClient(httpClient)
+	if err != nil {
+		t.Fatalf("NewClient() error: %v", err)
+	}
+
+	resp, err := client.GetClobMarketInfo(context.Background(), "0xcond-1")
+	if err != nil {
+		t.Fatalf("GetClobMarketInfo() error: %v", err)
+	}
+	if resp.ConditionID != "0xcond-1" {
+		t.Fatalf("unexpected condition id: %+v", resp)
+	}
+	if len(resp.T) != 2 || resp.T[0].TokenID != "tok-yes" || resp.T[1].Outcome != "No" {
+		t.Fatalf("unexpected tokens: %+v", resp.T)
+	}
+	if resp.MOS != 5 || resp.MTS != 0.01 || resp.TBF != 125 {
+		t.Fatalf("unexpected market info numbers: %+v", resp)
+	}
+	if !resp.FD.TakerOnly || resp.FD.Rate != 0.05 || resp.FD.Exponent != 1 {
+		t.Fatalf("unexpected fee details: %+v", resp.FD)
+	}
+}
+
+func TestClientGetClobMarketInfoRequiresConditionID(t *testing.T) {
+	httpClient, err := httpx.New(httpx.ClientConfig{BaseURL: "https://clob.polymarket.com", Timeout: time.Second})
+	if err != nil {
+		t.Fatalf("httpx.New() error: %v", err)
+	}
+
+	client, err := NewClient(httpClient)
+	if err != nil {
+		t.Fatalf("NewClient() error: %v", err)
+	}
+
+	_, err = client.GetClobMarketInfo(context.Background(), "")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var typed *polyerrors.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected *errors.Error, got %T", err)
+	}
+	if typed.Kind != polyerrors.ErrRequestBuild {
+		t.Fatalf("expected ErrRequestBuild, got %v", typed.Kind)
+	}
+}
+
+func TestClientGetClobMarketInfoReturnsProtocolErrorOnMissingTokens(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"condition_id":"0xcond-1","mos":5,"mts":0.01,"fd":{"r":0.05,"e":1,"to":true}}`)
+	}))
+	defer server.Close()
+
+	httpClient, err := httpx.New(httpx.ClientConfig{BaseURL: server.URL, Timeout: time.Second})
+	if err != nil {
+		t.Fatalf("httpx.New() error: %v", err)
+	}
+
+	client, err := NewClient(httpClient)
+	if err != nil {
+		t.Fatalf("NewClient() error: %v", err)
+	}
+
+	_, err = client.GetClobMarketInfo(context.Background(), "0xcond-1")
 	if err == nil {
 		t.Fatal("expected error")
 	}

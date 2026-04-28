@@ -23,6 +23,7 @@ func TestSignerCreateSignedOrderUsesFunderAsMakerForSignatureType2(t *testing.T)
 		NegRisk:    false,
 		TickSize:   0.01,
 		Expiration: 12345,
+		Timestamp:  1713398400000,
 	})
 	if err != nil {
 		t.Fatalf("CreateSignedOrder() error: %v", err)
@@ -44,6 +45,15 @@ func TestSignerCreateSignedOrderUsesFunderAsMakerForSignatureType2(t *testing.T)
 	}
 	if order.SignatureType != 2 {
 		t.Fatalf("unexpected signature type: %d", order.SignatureType)
+	}
+	if order.Timestamp != "1713398400000" {
+		t.Fatalf("unexpected timestamp: %q", order.Timestamp)
+	}
+	if order.Metadata != Bytes32Zero {
+		t.Fatalf("unexpected metadata: %q", order.Metadata)
+	}
+	if order.Builder != Bytes32Zero {
+		t.Fatalf("unexpected builder: %q", order.Builder)
 	}
 	if order.Signature == "" {
 		t.Fatal("expected signature")

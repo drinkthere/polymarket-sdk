@@ -19,15 +19,16 @@ import (
 )
 
 const (
-	CTFExchangeAddress        = "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E"
-	NegRiskCTFExchangeAddress = "0xC5d563A36AE78145C45a50134d48A1215220f80a"
+	CTFExchangeV2Address        = "0xE111180000d2663C0091e4f400237545B87B996B"
+	NegRiskCTFExchangeV2Address = "0xe2222d279d744050d28e00520010520000310F59"
+	Bytes32Zero                 = "0x0000000000000000000000000000000000000000000000000000000000000000"
 )
 
 var (
 	domainTypeHash = crypto.Keccak256Hash([]byte(
 		"EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"))
 	orderTypeHash = crypto.Keccak256Hash([]byte(
-		"Order(uint256 salt,address maker,address signer,address taker,uint256 tokenId,uint256 makerAmount,uint256 takerAmount,uint256 expiration,uint256 nonce,uint256 feeRateBps,uint8 side,uint8 signatureType)"))
+		"Order(uint256 salt,address maker,address signer,uint256 tokenId,uint256 makerAmount,uint256 takerAmount,uint8 side,uint8 signatureType,uint256 timestamp,bytes32 metadata,bytes32 builder)"))
 )
 
 type APICredentials struct {
@@ -92,15 +93,15 @@ type SignedOrder struct {
 	Salt          int64  `json:"salt"`
 	Maker         string `json:"maker"`
 	Signer        string `json:"signer"`
-	Taker         string `json:"taker"`
 	TokenID       string `json:"tokenId"`
 	MakerAmount   string `json:"makerAmount"`
 	TakerAmount   string `json:"takerAmount"`
 	Expiration    string `json:"expiration"`
-	Nonce         int    `json:"nonce"`
-	FeeRateBps    int    `json:"feeRateBps"`
 	Side          Side   `json:"side"`
 	SignatureType int    `json:"signatureType"`
+	Timestamp     string `json:"timestamp"`
+	Metadata      string `json:"metadata"`
+	Builder       string `json:"builder"`
 	Signature     string `json:"signature"`
 }
 
@@ -112,7 +113,9 @@ type CreateSignedOrderRequest struct {
 	NegRisk    bool
 	TickSize   float64
 	Expiration int64
-	FeeRateBPS int
+	Timestamp  int64
+	Metadata   string
+	Builder    string
 }
 
 type Signer struct {
@@ -270,19 +273,30 @@ func (s *Signer) CreateSignedOrder(req CreateSignedOrderRequest) (SignedOrder, e
 	}
 
 	signerAddr := s.address
-	taker := common.Address{}
-	expirationBig := new(big.Int).SetInt64(req.Expiration)
-	nonce := big.NewInt(0)
-	feeRateBps := new(big.Int).SetInt64(int64(req.FeeRateBPS))
 
 	maker := s.address
 	if s.signatureType == 2 && strings.TrimSpace(s.funder) != "" {
 		maker = common.HexToAddress(s.funder)
 	}
 
-	exchangeAddr := CTFExchangeAddress
+	exchangeAddr := CTFExchangeV2Address
 	if req.NegRisk {
-		exchangeAddr = NegRiskCTFExchangeAddress
+		exchangeAddr = NegRiskCTFExchangeV2Address
+	}
+
+	timestamp := req.Timestamp
+	if timestamp <= 0 {
+		timestamp = time.Now().UnixMilli()
+	}
+	timestampBig := new(big.Int).SetInt64(timestamp)
+
+	metadata := strings.TrimSpace(req.Metadata)
+	if metadata == "" {
+		metadata = Bytes32Zero
+	}
+	builder := strings.TrimSpace(req.Builder)
+	if builder == "" {
+		builder = Bytes32Zero
 	}
 
 	structHash := crypto.Keccak256Hash(
@@ -290,15 +304,14 @@ func (s *Signer) CreateSignedOrder(req CreateSignedOrderRequest) (SignedOrder, e
 		common.LeftPadBytes(saltBig.Bytes(), 32),
 		common.LeftPadBytes(maker.Bytes(), 32),
 		common.LeftPadBytes(signerAddr.Bytes(), 32),
-		common.LeftPadBytes(taker.Bytes(), 32),
 		common.LeftPadBytes(tokenIDBig.Bytes(), 32),
 		common.LeftPadBytes(makerAmount.Bytes(), 32),
 		common.LeftPadBytes(takerAmount.Bytes(), 32),
-		common.LeftPadBytes(expirationBig.Bytes(), 32),
-		common.LeftPadBytes(nonce.Bytes(), 32),
-		common.LeftPadBytes(feeRateBps.Bytes(), 32),
 		common.LeftPadBytes(big.NewInt(sideInt).Bytes(), 32),
 		common.LeftPadBytes(big.NewInt(int64(s.signatureType)).Bytes(), 32),
+		common.LeftPadBytes(timestampBig.Bytes(), 32),
+		hexToBytes32(metadata),
+		hexToBytes32(builder),
 	)
 
 	domainSep := buildDomainSeparator(s.chainID, exchangeAddr)
@@ -315,15 +328,15 @@ func (s *Signer) CreateSignedOrder(req CreateSignedOrderRequest) (SignedOrder, e
 		Salt:          saltVal,
 		Maker:         strings.ToLower(maker.Hex()),
 		Signer:        strings.ToLower(signerAddr.Hex()),
-		Taker:         strings.ToLower(taker.Hex()),
 		TokenID:       req.TokenID,
 		MakerAmount:   makerAmount.String(),
 		TakerAmount:   takerAmount.String(),
 		Expiration:    strconv.FormatInt(req.Expiration, 10),
-		Nonce:         0,
-		FeeRateBps:    req.FeeRateBPS,
 		Side:          req.Side,
 		SignatureType: s.signatureType,
+		Timestamp:     strconv.FormatInt(timestamp, 10),
+		Metadata:      metadata,
+		Builder:       builder,
 		Signature:     "0x" + common.Bytes2Hex(sig),
 	}, nil
 }
@@ -401,7 +414,7 @@ func hashString(s string) common.Hash {
 
 func buildDomainSeparator(chainID int, exchangeAddr string) common.Hash {
 	name := hashString("Polymarket CTF Exchange")
-	version := hashString("1")
+	version := hashString("2")
 	chainIDBig := new(big.Int).SetInt64(int64(chainID))
 
 	return crypto.Keccak256Hash(
@@ -411,4 +424,15 @@ func buildDomainSeparator(chainID int, exchangeAddr string) common.Hash {
 		common.LeftPadBytes(chainIDBig.Bytes(), 32),
 		common.LeftPadBytes(common.HexToAddress(exchangeAddr).Bytes(), 32),
 	)
+}
+
+func hexToBytes32(value string) []byte {
+	raw := strings.TrimPrefix(strings.TrimSpace(value), "0x")
+	if len(raw) < 64 {
+		raw = strings.Repeat("0", 64-len(raw)) + raw
+	}
+	if len(raw) > 64 {
+		raw = raw[len(raw)-64:]
+	}
+	return common.Hex2Bytes(raw)
 }
