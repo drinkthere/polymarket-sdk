@@ -31,6 +31,33 @@ type GetEventsBySlugResponse struct {
 	Events []Event
 }
 
+type GetClobMarketInfoResponse struct {
+	ConditionID string          `json:"condition_id"`
+	GST         *string         `json:"gst"`
+	R           json.RawMessage `json:"r"`
+	T           []ClobToken     `json:"t"`
+	MOS         float64         `json:"mos"`
+	MTS         float64         `json:"mts"`
+	MBF         float64         `json:"mbf"`
+	TBF         float64         `json:"tbf"`
+	RFQE        bool            `json:"rfqe"`
+	ITODE       bool            `json:"itode"`
+	IBCE        bool            `json:"ibce"`
+	FD          FeeDetails      `json:"fd"`
+	OAS         float64         `json:"oas"`
+}
+
+type ClobToken struct {
+	TokenID string `json:"t"`
+	Outcome string `json:"o"`
+}
+
+type FeeDetails struct {
+	Rate      float64 `json:"r"`
+	Exponent  float64 `json:"e"`
+	TakerOnly bool    `json:"to"`
+}
+
 type Event struct {
 	ID           string   `json:"id"`
 	Slug         string   `json:"slug"`
@@ -51,12 +78,19 @@ type Market struct {
 	Question                 string          `json:"question"`
 	Description              string          `json:"description"`
 	Outcomes                 json.RawMessage `json:"outcomes"`
+	OutcomePrices            json.RawMessage `json:"outcomePrices"`
 	ClobTokenIDs             json.RawMessage `json:"clobTokenIds"`
 	EndDate                  string          `json:"endDate"`
 	CreatedAt                string          `json:"createdAt"`
 	AcceptingOrdersTimestamp string          `json:"acceptingOrdersTimestamp"`
 	EventStartTime           string          `json:"eventStartTime"`
 	GroupItemTitle           string          `json:"groupItemTitle"`
+	SportsMarketType         string          `json:"sportsMarketType"`
+	Active                   bool            `json:"active"`
+	Closed                   bool            `json:"closed"`
+	BestBid                  float64         `json:"bestBid"`
+	BestAsk                  float64         `json:"bestAsk"`
+	Spread                   float64         `json:"spread"`
 }
 
 type EventRef struct {
@@ -109,6 +143,31 @@ func (c *Client) GetEventsBySlug(ctx context.Context, slug string) (GetEventsByS
 		}
 	}
 	return GetEventsBySlugResponse{Events: events}, nil
+}
+
+func (c *Client) GetClobMarketInfo(ctx context.Context, conditionID string) (GetClobMarketInfoResponse, error) {
+	conditionID = strings.TrimSpace(conditionID)
+	if conditionID == "" {
+		return GetClobMarketInfoResponse{}, requestBuildError("markets.get_clob_market_info", "conditionID is required")
+	}
+
+	var info GetClobMarketInfoResponse
+	if err := c.do(ctx, "markets.get_clob_market_info", "/markets/"+conditionID, nil, &info); err != nil {
+		return GetClobMarketInfoResponse{}, err
+	}
+	if strings.TrimSpace(info.ConditionID) == "" {
+		info.ConditionID = conditionID
+	}
+	if len(info.T) == 0 {
+		return GetClobMarketInfoResponse{}, protocolError("markets.get_clob_market_info", "tokens are required")
+	}
+	if info.MTS <= 0 {
+		return GetClobMarketInfoResponse{}, protocolError("markets.get_clob_market_info", "mts must be > 0")
+	}
+	if info.MOS <= 0 {
+		return GetClobMarketInfoResponse{}, protocolError("markets.get_clob_market_info", "mos must be > 0")
+	}
+	return info, nil
 }
 
 func (c *Client) GetCryptoPriceOpen(ctx context.Context, req CryptoPriceRequest) (CryptoPriceResponse, error) {

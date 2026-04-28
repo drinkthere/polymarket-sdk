@@ -171,6 +171,9 @@ func TestPlaceMakerOrderPostsTypedPayload(t *testing.T) {
 			`"owner":"key-1"`,
 			`"orderType":"GTC"`,
 			`"tokenId":"asset-1"`,
+			`"timestamp":"1713398400000"`,
+			`"metadata":"0x0000000000000000000000000000000000000000000000000000000000000000"`,
+			`"builder":"0x0000000000000000000000000000000000000000000000000000000000000000"`,
 			`"signature":"0xsig"`,
 		} {
 			if !strings.Contains(text, needle) {
@@ -196,15 +199,15 @@ func TestPlaceMakerOrderPostsTypedPayload(t *testing.T) {
 			Salt:          1,
 			Maker:         "0xmaker",
 			Signer:        "0xsigner",
-			Taker:         "0x0000000000000000000000000000000000000000",
 			TokenID:       "asset-1",
 			MakerAmount:   "50",
 			TakerAmount:   "21",
 			Side:          SideBuy,
 			Expiration:    "9999999999",
-			Nonce:         7,
-			FeeRateBps:    0,
 			SignatureType: 0,
+			Timestamp:     "1713398400000",
+			Metadata:      "0x0000000000000000000000000000000000000000000000000000000000000000",
+			Builder:       "0x0000000000000000000000000000000000000000000000000000000000000000",
 			Signature:     "0xsig",
 		},
 	})
@@ -213,6 +216,52 @@ func TestPlaceMakerOrderPostsTypedPayload(t *testing.T) {
 	}
 	if !got.Success || got.OrderID != "ord-1" {
 		t.Fatalf("unexpected response: %+v", got)
+	}
+}
+
+func TestPlaceMakerOrderRespectsPostOnlyFalse(t *testing.T) {
+	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/order" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll() error = %v", err)
+		}
+		if !strings.Contains(string(body), `"postOnly":false`) {
+			t.Fatalf("request body missing postOnly=false: %s", string(body))
+		}
+		_, _ = io.WriteString(w, `{"success":true,"errorMsg":"","orderID":"ord-2","transactionsHashes":[],"status":"LIVE","takingAmount":"21","makingAmount":"50"}`)
+	}))
+
+	client, err := NewClient(httpClient, validAuthConfig())
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	_, err = client.PlaceMakerOrder(t.Context(), PlaceMakerOrderRequest{
+		Credentials: validCreds(),
+		Owner:       "key-1",
+		OrderType:   OrderTypeGTC,
+		PostOnly:    false,
+		Order: MakerOrder{
+			Salt:          1,
+			Maker:         "0xmaker",
+			Signer:        "0xsigner",
+			TokenID:       "asset-1",
+			MakerAmount:   "50",
+			TakerAmount:   "21",
+			Side:          SideBuy,
+			Expiration:    "9999999999",
+			SignatureType: 0,
+			Timestamp:     "1713398400000",
+			Metadata:      "0x0000000000000000000000000000000000000000000000000000000000000000",
+			Builder:       "0x0000000000000000000000000000000000000000000000000000000000000000",
+			Signature:     "0xsig",
+		},
+	})
+	if err != nil {
+		t.Fatalf("PlaceMakerOrder() error = %v", err)
 	}
 }
 
