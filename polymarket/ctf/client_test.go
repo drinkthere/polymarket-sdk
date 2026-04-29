@@ -47,6 +47,45 @@ func TestNewClientRequiresRPCURL(t *testing.T) {
 	}
 }
 
+func TestNewClientContextUsesDialContextAndOwnsResult(t *testing.T) {
+	originalDial := dialRPCClient
+	t.Cleanup(func() {
+		dialRPCClient = originalDial
+	})
+
+	closeCalls := 0
+	type ctxKey struct{}
+	ctx := context.WithValue(t.Context(), ctxKey{}, "ctx-value")
+
+	dialRPCClient = func(gotCtx context.Context, rpcURL string) (ContractCaller, func() error, error) {
+		if got := gotCtx.Value(ctxKey{}); got != "ctx-value" {
+			t.Fatalf("context value = %#v", got)
+		}
+		if rpcURL != "http://rpc.example" {
+			t.Fatalf("rpcURL = %q", rpcURL)
+		}
+		return stubContractCaller{}, func() error {
+			closeCalls++
+			return nil
+		}, nil
+	}
+
+	client, err := NewClientContext(ctx, Config{RPCURL: "http://rpc.example"})
+	if err != nil {
+		t.Fatalf("NewClientContext() error = %v", err)
+	}
+
+	if err := client.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatalf("second Close() error = %v", err)
+	}
+	if closeCalls != 1 {
+		t.Fatalf("close calls = %d want 1", closeCalls)
+	}
+}
+
 func TestNewClientWithCallerRequiresCaller(t *testing.T) {
 	var caller ContractCaller
 
@@ -97,28 +136,6 @@ func TestClientCloseDoesNotCloseInjectedCloser(t *testing.T) {
 	}
 	if caller.closeCalls != 0 {
 		t.Fatalf("close calls = %d want 0", caller.closeCalls)
-	}
-}
-
-func TestClientCloseUsesOwnedCloser(t *testing.T) {
-	closeCalls := 0
-
-	client, err := newClient(stubContractCaller{}, func() error {
-		closeCalls++
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("newClient() error = %v", err)
-	}
-
-	if err := client.Close(); err != nil {
-		t.Fatalf("Close() error = %v", err)
-	}
-	if err := client.Close(); err != nil {
-		t.Fatalf("second Close() error = %v", err)
-	}
-	if closeCalls != 1 {
-		t.Fatalf("close calls = %d want 1", closeCalls)
 	}
 }
 
@@ -190,6 +207,45 @@ func TestIsResolvedReturnsFalseWhenPayoutDenominatorZero(t *testing.T) {
 	}
 	if resolved {
 		t.Fatal("expected unresolved")
+	}
+}
+
+func TestIsResolvedClassifiesCallErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		kind polyerrors.ErrorKind
+	}{
+		{name: "deadline exceeded", err: context.DeadlineExceeded, kind: polyerrors.ErrTimeout},
+		{name: "canceled", err: context.Canceled, kind: polyerrors.ErrClosed},
+		{name: "client is closed", err: errors.New("client is closed"), kind: polyerrors.ErrClosed},
+		{name: "other", err: errors.New("boom"), kind: polyerrors.ErrNetwork},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client, err := NewClientWithCaller(stubContractCaller{
+				callContract: func(_ ethereum.CallMsg) ([]byte, error) {
+					return nil, tt.err
+				},
+			})
+			if err != nil {
+				t.Fatalf("NewClientWithCaller() error = %v", err)
+			}
+
+			_, err = client.IsResolved(t.Context(), "0x1234")
+			if err == nil {
+				t.Fatal("expected error")
+			}
+
+			var typed *polyerrors.Error
+			if !errors.As(err, &typed) {
+				t.Fatalf("expected typed error, got %T", err)
+			}
+			if typed.Kind != tt.kind {
+				t.Fatalf("kind = %q want %q", typed.Kind, tt.kind)
+			}
+		})
 	}
 }
 

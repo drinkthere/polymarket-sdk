@@ -3,6 +3,7 @@ package ctf
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"math/big"
 	"reflect"
 	"strconv"
@@ -31,9 +32,19 @@ const mergeCtfABIJSON = `[
 ]`
 
 var (
-	ctfABI     = mustParseABI(ctfABIJSON)
-	negRiskABI = mustParseABI(negRiskABIJSON)
-	mergeABI   = mustParseABI(mergeCtfABIJSON)
+	ctfABI        = mustParseABI(ctfABIJSON)
+	negRiskABI    = mustParseABI(negRiskABIJSON)
+	mergeABI      = mustParseABI(mergeCtfABIJSON)
+	dialRPCClient = func(ctx context.Context, rpcURL string) (ContractCaller, func() error, error) {
+		eth, err := ethclient.DialContext(ctx, rpcURL)
+		if err != nil {
+			return nil, nil, err
+		}
+		return eth, func() error {
+			eth.Close()
+			return nil
+		}, nil
+	}
 )
 
 type Client struct {
@@ -44,6 +55,10 @@ type Client struct {
 }
 
 func NewClient(cfg Config) (*Client, error) {
+	return NewClientContext(context.Background(), cfg)
+}
+
+func NewClientContext(ctx context.Context, cfg Config) (*Client, error) {
 	rpcURL := strings.TrimSpace(cfg.RPCURL)
 	if rpcURL == "" {
 		return nil, &polyerrors.Error{
@@ -53,20 +68,17 @@ func NewClient(cfg Config) (*Client, error) {
 		}
 	}
 
-	eth, err := ethclient.Dial(rpcURL)
+	caller, closeFn, err := dialRPCClient(ctx, rpcURL)
 	if err != nil {
 		return nil, &polyerrors.Error{
-			Kind:    polyerrors.ErrNetwork,
+			Kind:    classifyRPCError(err),
 			Op:      "ctf.new",
 			Message: err.Error(),
 			Cause:   err,
 		}
 	}
 
-	return newClient(eth, func() error {
-		eth.Close()
-		return nil
-	})
+	return newClient(caller, closeFn)
 }
 
 func NewClientWithCaller(caller ContractCaller) (*Client, error) {
@@ -120,7 +132,7 @@ func (c *Client) IsResolved(ctx context.Context, conditionID string) (bool, erro
 	}, nil)
 	if err != nil {
 		return false, &polyerrors.Error{
-			Kind:    polyerrors.ErrNetwork,
+			Kind:    classifyRPCError(err),
 			Op:      "ctf.is_resolved",
 			Message: err.Error(),
 			Cause:   err,
@@ -356,6 +368,30 @@ func isNilContractCaller(caller ContractCaller) bool {
 	default:
 		return false
 	}
+}
+
+func classifyRPCError(err error) polyerrors.ErrorKind {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return polyerrors.ErrClosed
+	case errors.Is(err, context.DeadlineExceeded):
+		return polyerrors.ErrTimeout
+	case isClosedRPCError(err):
+		return polyerrors.ErrClosed
+	default:
+		return polyerrors.ErrNetwork
+	}
+}
+
+func isClosedRPCError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(message, "client is closed") ||
+		strings.Contains(message, "connection is closed") ||
+		strings.Contains(message, "use of closed network connection")
 }
 
 type simpleError string
