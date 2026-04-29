@@ -3,6 +3,7 @@ package market
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	polyerrors "github.com/drinkthere/polymarket-sdk/polymarket/errors"
@@ -73,8 +74,14 @@ func DecodeEvents(raw []byte) ([]Event, error) {
 			return nil, decodeError("market.decode", item, err)
 		}
 
-		if meta.isFallback() && !isLegacyMarketEvent(meta.kind(), item) {
-			continue
+		if meta.isFallback() {
+			shouldDecode, err := classifyLegacyMarketEvent(meta.kind(), item)
+			if err != nil {
+				return nil, decodeError(decodeEventOp(meta.kind()), item, err)
+			}
+			if !shouldDecode {
+				continue
+			}
 		}
 
 		switch meta.kind() {
@@ -117,38 +124,135 @@ func (m eventMeta) isFallback() bool {
 	return strings.TrimSpace(m.EventType) == "" && strings.TrimSpace(m.Event) != ""
 }
 
-func isLegacyMarketEvent(kind string, raw []byte) bool {
+func classifyLegacyMarketEvent(kind string, raw []byte) (bool, error) {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return false, err
+	}
+
 	switch kind {
 	case "book":
-		var payload struct {
-			AssetID string            `json:"asset_id"`
-			Bids    []json.RawMessage `json:"bids"`
-			Asks    []json.RawMessage `json:"asks"`
+		assetID, hasAssetID := payload["asset_id"]
+		bids, hasBids := payload["bids"]
+		asks, hasAsks := payload["asks"]
+		if !hasAssetID && !hasBids && !hasAsks {
+			return false, nil
 		}
-		if err := json.Unmarshal(raw, &payload); err != nil {
-			return false
+		if err := requireNonEmptyJSONString(assetID, hasAssetID, "asset_id"); err != nil {
+			return false, err
 		}
-		return strings.TrimSpace(payload.AssetID) != "" && (payload.Bids != nil || payload.Asks != nil)
+		if !hasBids && !hasAsks {
+			return false, fmt.Errorf("book payload requires bids or asks")
+		}
+		if err := requireJSONArray(bids, hasBids, "bids"); err != nil {
+			return false, err
+		}
+		if err := requireJSONArray(asks, hasAsks, "asks"); err != nil {
+			return false, err
+		}
+		return true, nil
 	case "best_bid_ask":
-		var payload struct {
-			AssetID string  `json:"asset_id"`
-			BestBid *string `json:"best_bid"`
-			BestAsk *string `json:"best_ask"`
+		assetID, hasAssetID := payload["asset_id"]
+		bestBid, hasBestBid := payload["best_bid"]
+		bestAsk, hasBestAsk := payload["best_ask"]
+		if !hasAssetID && !hasBestBid && !hasBestAsk {
+			return false, nil
 		}
-		if err := json.Unmarshal(raw, &payload); err != nil {
-			return false
+		if err := requireNonEmptyJSONString(assetID, hasAssetID, "asset_id"); err != nil {
+			return false, err
 		}
-		return strings.TrimSpace(payload.AssetID) != "" && payload.BestBid != nil && payload.BestAsk != nil
+		if err := requireJSONString(bestBid, hasBestBid, "best_bid"); err != nil {
+			return false, err
+		}
+		if err := requireJSONString(bestAsk, hasBestAsk, "best_ask"); err != nil {
+			return false, err
+		}
+		return true, nil
 	case "price_change":
-		var payload struct {
-			PriceChanges []json.RawMessage `json:"price_changes"`
+		priceChanges, hasPriceChanges := payload["price_changes"]
+		if !hasPriceChanges {
+			return false, nil
 		}
-		if err := json.Unmarshal(raw, &payload); err != nil {
-			return false
+		if err := requireJSONArray(priceChanges, hasPriceChanges, "price_changes"); err != nil {
+			return false, err
 		}
-		return payload.PriceChanges != nil
+		return true, nil
 	default:
-		return false
+		return false, nil
+	}
+}
+
+func requireNonEmptyJSONString(raw json.RawMessage, ok bool, field string) error {
+	if err := requireJSONString(raw, ok, field); err != nil {
+		return err
+	}
+
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return err
+	}
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("%s is required", field)
+	}
+	return nil
+}
+
+func requireJSONString(raw json.RawMessage, ok bool, field string) error {
+	if !ok {
+		return fmt.Errorf("%s is required", field)
+	}
+
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return fmt.Errorf("%s must be a string: %w", field, err)
+	}
+	_ = value
+	return nil
+}
+
+func requireJSONArray(raw json.RawMessage, ok bool, field string) error {
+	if !ok {
+		return nil
+	}
+
+	var value []json.RawMessage
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return fmt.Errorf("%s must be an array: %w", field, err)
+	}
+	_ = value
+	return nil
+}
+
+func decodeEventOp(kind string) string {
+	switch kind {
+	case "book":
+		return "market.decode_book"
+	case "price_change":
+		return "market.decode_price_change"
+	case "best_bid_ask":
+		return "market.decode_best_bid_ask"
+	default:
+		return "market.decode"
+	}
+}
+
+func inferMessageType(raw []byte) (string, error) {
+	events, err := DecodeEvents(raw)
+	if err != nil {
+		return "", err
+	}
+	if len(events) == 0 {
+		return "", nil
+	}
+	switch {
+	case events[0].Book != nil:
+		return "book", nil
+	case events[0].PriceChange != nil:
+		return "price_change", nil
+	case events[0].BestBidAsk != nil:
+		return "best_bid_ask", nil
+	default:
+		return "", nil
 	}
 }
 

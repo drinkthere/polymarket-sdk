@@ -167,3 +167,43 @@ func TestClient_Subscribe_Unsubscribe_Read(t *testing.T) {
 		t.Fatalf("unexpected unsubscribe envelope: %v", unsub)
 	}
 }
+
+func TestClient_ReadMessage_IgnoresControlFrameEventFallback(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		up := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+		c, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade: %v", err)
+			return
+		}
+		defer c.Close()
+
+		if err := c.WriteMessage(websocket.TextMessage, []byte(`{"event":"book","assets_ids":["token_yes"]}`)); err != nil {
+			t.Errorf("WriteMessage: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := NewClient(Config{URL: "ws" + srv.URL[len("http"):]})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := c.Connect(ctx); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	msg, err := c.ReadMessage(ctx)
+	if err != nil {
+		t.Fatalf("ReadMessage: %v", err)
+	}
+	if msg.MessageType != "" {
+		t.Fatalf("MessageType = %q, want empty for control frame", msg.MessageType)
+	}
+}

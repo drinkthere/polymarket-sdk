@@ -51,8 +51,12 @@ func (c *ChannelClient) ReadMessage(ctx context.Context) (Message, error) {
 		return Message{}, err
 	}
 	cp := append([]byte(nil), payload...)
+	messageType, err := inferMessageType(cp)
+	if err != nil {
+		return Message{}, err
+	}
 	return Message{
-		MessageType: ws.InferMessageType(cp),
+		MessageType: messageType,
 		Raw:         cp,
 	}, nil
 }
