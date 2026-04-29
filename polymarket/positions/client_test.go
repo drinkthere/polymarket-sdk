@@ -250,6 +250,63 @@ func TestClientListAllReturnsSuccessAtMaxOffsetBoundary(t *testing.T) {
 	}
 }
 
+func TestClientListAllFetchesTailPageAcrossMaxOffsetBoundary(t *testing.T) {
+	var offsets []string
+	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		offset := r.URL.Query().Get("offset")
+		offsets = append(offsets, offset)
+
+		if got := r.URL.Query().Get("limit"); got != "500" {
+			t.Fatalf("limit query = %s, want 500", got)
+		}
+		if got := r.URL.Query().Get("sizeThreshold"); got != "0" {
+			t.Fatalf("sizeThreshold query = %s, want 0", got)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		switch offset {
+		case "9800":
+			_, _ = io.WriteString(w, positionsJSONPage(t, 9800, 500))
+		case "10000":
+			_, _ = io.WriteString(w, positionsJSONPage(t, 10000, 500))
+		default:
+			t.Fatalf("unexpected offset query: %s", offset)
+		}
+	}))
+
+	client, err := NewClient(httpClient)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	resp, err := client.ListAll(context.Background(), ListRequest{
+		User:   validUser333,
+		Limit:  500,
+		Offset: 9800,
+	})
+	if err != nil {
+		t.Fatalf("ListAll() error = %v", err)
+	}
+	if len(offsets) != 2 || offsets[0] != "9800" || offsets[1] != "10000" {
+		t.Fatalf("offsets = %v, want [9800 10000]", offsets)
+	}
+	if len(resp.Positions) != 700 {
+		t.Fatalf("len(resp.Positions) = %d, want 700", len(resp.Positions))
+	}
+	if resp.Positions[0].Asset != "tok-9800" {
+		t.Fatalf("first asset = %s, want tok-9800", resp.Positions[0].Asset)
+	}
+	if resp.Positions[499].Asset != "tok-10299" {
+		t.Fatalf("asset[499] = %s, want tok-10299", resp.Positions[499].Asset)
+	}
+	if resp.Positions[500].Asset != "tok-10300" {
+		t.Fatalf("asset[500] = %s, want tok-10300", resp.Positions[500].Asset)
+	}
+	if resp.Positions[len(resp.Positions)-1].Asset != "tok-10499" {
+		t.Fatalf("last asset = %s, want tok-10499", resp.Positions[len(resp.Positions)-1].Asset)
+	}
+}
+
 func TestClientListReturnsTypedDecodeError(t *testing.T) {
 	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -288,6 +345,37 @@ func TestClientListReturnsTypedProtocolErrorForInvalidDecodedPosition(t *testing
 	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `[{}]`)
+	}))
+
+	client, err := NewClient(httpClient)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	_, err = client.List(context.Background(), ListRequest{User: validUser444})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var typed *polyerrors.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected *errors.Error, got %T", err)
+	}
+	if typed.Kind != polyerrors.ErrProtocol {
+		t.Fatalf("expected ErrProtocol, got %v", typed.Kind)
+	}
+	if typed.Op != "positions.list" {
+		t.Fatalf("expected op positions.list, got %s", typed.Op)
+	}
+	if typed.Method != http.MethodGet {
+		t.Fatalf("expected method GET, got %s", typed.Method)
+	}
+}
+
+func TestClientListReturnsTypedProtocolErrorForTopLevelNull(t *testing.T) {
+	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `null`)
 	}))
 
 	client, err := NewClient(httpClient)
