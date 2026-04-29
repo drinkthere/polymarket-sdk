@@ -462,7 +462,7 @@ func explicitUnknownBatchError(batch []json.RawMessage) error {
 
 	var firstUnknown json.RawMessage
 	var firstUnknownKind string
-	unknownCount := 0
+	hasExplicitUnknown := false
 
 	for _, item := range batch {
 		var meta eventMeta
@@ -472,17 +472,17 @@ func explicitUnknownBatchError(batch []json.RawMessage) error {
 
 		kind := meta.kind()
 		if kind == "" || meta.isFallback() || isSupportedEventKind(kind) {
-			return nil
+			continue
 		}
 
-		if unknownCount == 0 {
+		if !hasExplicitUnknown {
 			firstUnknown = item
 			firstUnknownKind = kind
 		}
-		unknownCount++
+		hasExplicitUnknown = true
 	}
 
-	if unknownCount == len(batch) {
+	if hasExplicitUnknown {
 		return decodeError("market.decode", firstUnknown, fmt.Errorf("unsupported event_type %q", firstUnknownKind))
 	}
 	return nil
