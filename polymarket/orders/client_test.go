@@ -157,6 +157,65 @@ func TestGetOpenOrdersPaginatesAndSignsRequests(t *testing.T) {
 	}
 }
 
+func TestGetUserTradesAndRaw(t *testing.T) {
+	var calls int
+
+	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/data/trades" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("POLY_API_KEY"); got != "key-1" {
+			t.Fatalf("POLY_API_KEY = %q", got)
+		}
+		calls++
+		switch calls {
+		case 1:
+			if got := r.URL.Query().Get("next_cursor"); got != "MA==" {
+				t.Fatalf("next_cursor = %q", got)
+			}
+			_, _ = io.WriteString(w, `{"data":[{"id":"tr-1","asset_id":"asset-1","market":"mkt-1","side":"BUY","price":"0.41","size":"5","status":"MATCHED","match_time":"1","created_at":"1","owner":"owner"}],"next_cursor":"MQ=="}`)
+		case 2:
+			if got := r.URL.Query().Get("next_cursor"); got != "MQ==" {
+				t.Fatalf("next_cursor = %q", got)
+			}
+			_, _ = io.WriteString(w, `{"data":[{"id":"tr-2","asset_id":"asset-2","market":"mkt-2","side":"SELL","price":"0.52","size":"2","status":"MATCHED","match_time":"2","created_at":"2","owner":"owner"}],"next_cursor":"LTE="}`)
+		case 3:
+			if got := r.URL.Query().Get("next_cursor"); got != "MA==" {
+				t.Fatalf("next_cursor = %q", got)
+			}
+			_, _ = io.WriteString(w, `{"data":[{"id":"tr-1","asset_id":"asset-1","market":"mkt-1","side":"BUY","price":"0.41","size":"5","status":"MATCHED","match_time":"1","created_at":"1","owner":"owner"}],"next_cursor":"MQ=="}`)
+		case 4:
+			if got := r.URL.Query().Get("next_cursor"); got != "MQ==" {
+				t.Fatalf("next_cursor = %q", got)
+			}
+			_, _ = io.WriteString(w, `{"data":[{"id":"tr-2","asset_id":"asset-2","market":"mkt-2","side":"SELL","price":"0.52","size":"2","status":"MATCHED","match_time":"2","created_at":"2","owner":"owner"}],"next_cursor":"LTE="}`)
+		default:
+			t.Fatalf("unexpected page %d", calls)
+		}
+	}))
+
+	client, err := NewClient(httpClient, validAuthConfig())
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	trades, err := client.GetUserTrades(t.Context(), GetUserTradesRequest{Credentials: validCreds()})
+	if err != nil {
+		t.Fatalf("GetUserTrades() error = %v", err)
+	}
+	if len(trades) != 2 || trades[0].ID != "tr-1" || trades[1].ID != "tr-2" {
+		t.Fatalf("unexpected trades = %+v", trades)
+	}
+
+	raw, err := client.GetUserTradesRaw(t.Context(), GetUserTradesRawRequest{Credentials: validCreds()})
+	if err != nil {
+		t.Fatalf("GetUserTradesRaw() error = %v", err)
+	}
+	if len(raw) != 2 {
+		t.Fatalf("len(raw) = %d", len(raw))
+	}
+}
+
 func TestPlaceMakerOrderPostsTypedPayload(t *testing.T) {
 	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/order" {

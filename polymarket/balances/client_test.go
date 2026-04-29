@@ -104,6 +104,42 @@ func TestGetBalanceSignsRequest(t *testing.T) {
 	}
 }
 
+func TestUpdateAllowance(t *testing.T) {
+	client := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/balance-allowance/update" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.URL.Query().Get("asset_type"); got != "CONDITIONAL" {
+			t.Fatalf("asset_type = %q", got)
+		}
+		if got := r.URL.Query().Get("token_id"); got != "123" {
+			t.Fatalf("token_id = %q", got)
+		}
+		if got := r.Header.Get("POLY_API_KEY"); got != "key-1" {
+			t.Fatalf("POLY_API_KEY = %q", got)
+		}
+		_, _ = io.WriteString(w, `{"updated":true}`)
+	}))
+
+	balancesClient, err := NewClient(client, validAuthConfig())
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	resp, err := balancesClient.UpdateAllowance(t.Context(), UpdateAllowanceRequest{
+		Credentials:   validCreds(),
+		SignatureType: 2,
+		AssetType:     AssetTypeConditional,
+		TokenID:       "123",
+	})
+	if err != nil {
+		t.Fatalf("UpdateAllowance() error = %v", err)
+	}
+	if !resp.Updated {
+		t.Fatal("expected Updated=true")
+	}
+}
+
 func newTestHTTPClient(t *testing.T) *httpx.Client {
 	t.Helper()
 

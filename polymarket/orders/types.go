@@ -45,6 +45,27 @@ type OpenOrder struct {
 	OrderType       string   `json:"order_type"`
 }
 
+type GetUserTradesRequest struct {
+	Credentials polyauth.APICredentials
+}
+
+type GetUserTradesRawRequest struct {
+	Credentials polyauth.APICredentials
+}
+
+type UserTrade struct {
+	ID        string `json:"id"`
+	AssetID   string `json:"asset_id"`
+	Market    string `json:"market"`
+	Side      Side   `json:"side"`
+	Price     string `json:"price"`
+	Size      string `json:"size"`
+	Status    string `json:"status"`
+	MatchTime string `json:"match_time"`
+	CreatedAt string `json:"created_at"`
+	Owner     string `json:"owner"`
+}
+
 type PlaceMakerOrderRequest struct {
 	Credentials polyauth.APICredentials
 	Owner       string

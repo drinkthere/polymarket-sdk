@@ -111,6 +111,66 @@ func (c *Client) GetOpenOrders(ctx context.Context, req GetOpenOrdersRequest) ([
 	}
 }
 
+func (c *Client) GetUserTrades(ctx context.Context, req GetUserTradesRequest) ([]UserTrade, error) {
+	creds, err := c.credentials(ctx, req.Credentials)
+	if err != nil {
+		return nil, err
+	}
+
+	var all []UserTrade
+	nextCursor := "MA=="
+	for {
+		body, err := c.getUserTradesPage(ctx, creds, nextCursor, "orders.get_user_trades")
+		if err != nil {
+			return nil, err
+		}
+
+		var page struct {
+			Data       []UserTrade `json:"data"`
+			NextCursor string      `json:"next_cursor"`
+		}
+		if err := json.Unmarshal(body, &page); err != nil {
+			return nil, decodeError("orders.get_user_trades", body, err)
+		}
+
+		all = append(all, page.Data...)
+		if strings.TrimSpace(page.NextCursor) == "" || page.NextCursor == endCursor {
+			return all, nil
+		}
+		nextCursor = page.NextCursor
+	}
+}
+
+func (c *Client) GetUserTradesRaw(ctx context.Context, req GetUserTradesRawRequest) ([]json.RawMessage, error) {
+	creds, err := c.credentials(ctx, req.Credentials)
+	if err != nil {
+		return nil, err
+	}
+
+	var all []json.RawMessage
+	nextCursor := "MA=="
+	for {
+		body, err := c.getUserTradesPage(ctx, creds, nextCursor, "orders.get_user_trades_raw")
+		if err != nil {
+			return nil, err
+		}
+
+		var page struct {
+			Data       []json.RawMessage `json:"data"`
+			NextCursor string            `json:"next_cursor"`
+		}
+		if err := json.Unmarshal(body, &page); err != nil {
+			return nil, decodeError("orders.get_user_trades_raw", body, err)
+		}
+
+		all = append(all, page.Data...)
+		if strings.TrimSpace(page.NextCursor) == "" || page.NextCursor == endCursor {
+			return all, nil
+		}
+		nextCursor = page.NextCursor
+	}
+}
+
 func (c *Client) PlaceMakerOrder(ctx context.Context, req PlaceMakerOrderRequest) (PlaceMakerOrderResponse, error) {
 	creds, err := c.credentials(ctx, req.Credentials)
 	if err != nil {
@@ -261,6 +321,27 @@ func (c *Client) credentials(ctx context.Context, creds polyauth.APICredentials)
 		return polyauth.APICredentials{}, err
 	}
 	return derived.APICredentials, nil
+}
+
+func (c *Client) getUserTradesPage(ctx context.Context, creds polyauth.APICredentials, nextCursor string, op string) ([]byte, error) {
+	query := url.Values{}
+	query.Set("next_cursor", nextCursor)
+
+	headers, err := c.signer.CreateL2Headers(creds, polyauth.L2HeaderArgs{
+		Method:      http.MethodGet,
+		RequestPath: "/data/trades",
+	}, polyauth.Now())
+	if err != nil {
+		return nil, authError(op, err)
+	}
+
+	return c.transport.DoJSON(ctx, polyauth.TransportRequest{
+		Op:      op,
+		Method:  http.MethodGet,
+		Path:    "/data/trades",
+		Query:   query,
+		Headers: headers.HTTPHeader(),
+	})
 }
 
 func cloneQuery(src url.Values) url.Values {

@@ -100,6 +100,45 @@ func (c *Client) GetBalance(ctx context.Context, req GetBalanceRequest) (GetBala
 	return resp, nil
 }
 
+func (c *Client) UpdateAllowance(ctx context.Context, req UpdateAllowanceRequest) (UpdateAllowanceResponse, error) {
+	creds, err := c.credentials(ctx, req.Credentials)
+	if err != nil {
+		return UpdateAllowanceResponse{}, err
+	}
+
+	query := url.Values{}
+	query.Set("asset_type", req.AssetType)
+	query.Set("signature_type", strconv.Itoa(req.SignatureType))
+	if strings.TrimSpace(req.TokenID) != "" {
+		query.Set("token_id", req.TokenID)
+	}
+
+	headers, err := c.signer.CreateL2Headers(creds, polyauth.L2HeaderArgs{
+		Method:      http.MethodGet,
+		RequestPath: "/balance-allowance/update",
+	}, polyauth.Now())
+	if err != nil {
+		return UpdateAllowanceResponse{}, &polyerrors.Error{Kind: polyerrors.ErrAuth, Op: "balances.update_allowance", Message: err.Error(), Cause: err}
+	}
+
+	body, err := c.transport.DoJSON(ctx, polyauth.TransportRequest{
+		Op:      "balances.update_allowance",
+		Method:  http.MethodGet,
+		Path:    "/balance-allowance/update",
+		Query:   query,
+		Headers: headers.HTTPHeader(),
+	})
+	if err != nil {
+		return UpdateAllowanceResponse{}, err
+	}
+
+	var resp UpdateAllowanceResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return UpdateAllowanceResponse{}, &polyerrors.Error{Kind: polyerrors.ErrDecode, Op: "balances.update_allowance", Message: err.Error(), Cause: err, RawBody: body}
+	}
+	return resp, nil
+}
+
 func (c *Client) credentials(ctx context.Context, creds polyauth.APICredentials) (polyauth.APICredentials, error) {
 	if creds.Valid() {
 		return creds, nil

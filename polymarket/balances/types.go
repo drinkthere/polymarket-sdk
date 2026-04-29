@@ -18,3 +18,14 @@ type GetBalanceResponse struct {
 	Balance   string `json:"balance"`
 	Allowance string `json:"allowance"`
 }
+
+type UpdateAllowanceRequest struct {
+	Credentials   polyauth.APICredentials
+	AssetType     string
+	TokenID       string
+	SignatureType int
+}
+
+type UpdateAllowanceResponse struct {
+	Updated bool `json:"updated"`
+}
