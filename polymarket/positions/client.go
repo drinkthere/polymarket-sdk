@@ -10,6 +10,7 @@ import (
 
 	polyerrors "github.com/drinkthere/polymarket-sdk/polymarket/errors"
 	"github.com/drinkthere/polymarket-sdk/polymarket/httpx"
+	"github.com/ethereum/go-ethereum/common"
 )
 
 const (
@@ -36,13 +37,21 @@ func NewClient(httpClient *httpx.Client) (*Client, error) {
 }
 
 func (c *Client) List(ctx context.Context, req ListRequest) (ListResponse, error) {
-	user := strings.TrimSpace(req.User)
-	if user == "" {
-		return ListResponse{}, &polyerrors.Error{
-			Kind:    polyerrors.ErrRequestBuild,
-			Op:      listOp,
-			Message: "user is required",
-		}
+	user, err := validateUser(req.User, listOp)
+	if err != nil {
+		return ListResponse{}, err
+	}
+	if req.Limit < 0 {
+		return ListResponse{}, requestBuildError(listOp, "limit must be >= 0")
+	}
+	if req.Limit > defaultPageLimit {
+		return ListResponse{}, requestBuildError(listOp, "limit must be <= 500")
+	}
+	if req.Offset < 0 {
+		return ListResponse{}, requestBuildError(listOp, "offset must be >= 0")
+	}
+	if req.Offset > maxPageOffset {
+		return ListResponse{}, requestBuildError(listOp, "offset must be <= 10000")
 	}
 
 	query := url.Values{}
@@ -74,6 +83,14 @@ func (c *Client) List(ctx context.Context, req ListRequest) (ListResponse, error
 
 func (c *Client) ListAll(ctx context.Context, req ListRequest) (ListResponse, error) {
 	pageReq := req
+	user, err := validateUser(pageReq.User, listAllOp)
+	if err != nil {
+		return ListResponse{}, err
+	}
+	pageReq.User = user
+	if pageReq.Limit > defaultPageLimit {
+		return ListResponse{}, requestBuildError(listAllOp, "limit must be <= 500")
+	}
 	if pageReq.Limit <= 0 {
 		pageReq.Limit = defaultPageLimit
 	}
@@ -84,11 +101,7 @@ func (c *Client) ListAll(ctx context.Context, req ListRequest) (ListResponse, er
 		pageReq.SizeThreshold = defaultSizeThreshold
 	}
 	if pageReq.Offset > maxPageOffset {
-		return ListResponse{}, &polyerrors.Error{
-			Kind:    polyerrors.ErrRequestBuild,
-			Op:      listAllOp,
-			Message: "offset must be <= 10000",
-		}
+		return ListResponse{}, requestBuildError(listAllOp, "offset must be <= 10000")
 	}
 
 	var all []Position
@@ -105,11 +118,7 @@ func (c *Client) ListAll(ctx context.Context, req ListRequest) (ListResponse, er
 
 		nextOffset := pageReq.Offset + len(resp.Positions)
 		if nextOffset > maxPageOffset {
-			return ListResponse{}, &polyerrors.Error{
-				Kind:    polyerrors.ErrRequestBuild,
-				Op:      listAllOp,
-				Message: "offset must be <= 10000",
-			}
+			return ListResponse{}, requestBuildError(listAllOp, "offset must be <= 10000")
 		}
 		pageReq.Offset = nextOffset
 	}
@@ -138,4 +147,23 @@ func (c *Client) do(ctx context.Context, op string, path string, query url.Value
 		}
 	}
 	return nil
+}
+
+func validateUser(user string, op string) (string, error) {
+	trimmed := strings.TrimSpace(user)
+	if trimmed == "" {
+		return "", requestBuildError(op, "user is required")
+	}
+	if !common.IsHexAddress(trimmed) {
+		return "", requestBuildError(op, "user must be a valid hex address")
+	}
+	return trimmed, nil
+}
+
+func requestBuildError(op string, message string) error {
+	return &polyerrors.Error{
+		Kind:    polyerrors.ErrRequestBuild,
+		Op:      op,
+		Message: message,
+	}
 }
