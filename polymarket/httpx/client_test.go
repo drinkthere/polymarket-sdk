@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -75,15 +76,21 @@ func TestDoJSONReturnsTypedAPIError(t *testing.T) {
 }
 
 func TestNewWithHTTPClientUsesInjectedClient(t *testing.T) {
-	var seenUA string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seenUA = r.Header.Get("User-Agent")
-		_, _ = io.WriteString(w, `{"ok":true}`)
-	}))
-	defer srv.Close()
-
-	rawClient := srv.Client()
-	client, err := NewWithHTTPClient(ClientConfig{BaseURL: srv.URL}, rawClient)
+	used := false
+	rawClient := &http.Client{
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			used = true
+			if r.Header.Get("User-Agent") != "pm5-test" {
+				t.Fatalf("ua = %q", r.Header.Get("User-Agent"))
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			}, nil
+		}),
+	}
+	client, err := NewWithHTTPClient(ClientConfig{BaseURL: "https://example.com"}, rawClient)
 	if err != nil {
 		t.Fatalf("NewWithHTTPClient() error = %v", err)
 	}
@@ -100,8 +107,8 @@ func TestNewWithHTTPClientUsesInjectedClient(t *testing.T) {
 	if string(body) != `{"ok":true}` {
 		t.Fatalf("DoJSON() body = %s", string(body))
 	}
-	if seenUA != "pm5-test" {
-		t.Fatalf("expected injected client request to reach server, got ua=%q", seenUA)
+	if !used {
+		t.Fatal("expected injected client to be used")
 	}
 }
 
@@ -360,6 +367,33 @@ func TestNewRejectsBaseURLWithQueryOrFragment(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := New(ClientConfig{BaseURL: tc.baseURL, Timeout: time.Second})
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			var typed *polyerrors.Error
+			if !errors.As(err, &typed) {
+				t.Fatalf("expected *errors.Error, got %T", err)
+			}
+			if typed.Kind != polyerrors.ErrRequestBuild {
+				t.Fatalf("expected ErrRequestBuild, got %v", typed.Kind)
+			}
+		})
+	}
+}
+
+func TestNewWithHTTPClientRejectsBaseURLWithInvalidSchemeOrQueryFragment(t *testing.T) {
+	rawClient := &http.Client{}
+
+	for _, tc := range []struct {
+		name    string
+		baseURL string
+	}{
+		{name: "invalid_scheme", baseURL: "ftp://example.com/api"},
+		{name: "query", baseURL: "https://example.com/api?foo=bar"},
+		{name: "fragment", baseURL: "https://example.com/api#frag"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewWithHTTPClient(ClientConfig{BaseURL: tc.baseURL}, rawClient)
 			if err == nil {
 				t.Fatal("expected error")
 			}

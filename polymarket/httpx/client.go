@@ -48,22 +48,6 @@ func New(cfg ClientConfig) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	switch parsed.Scheme {
-	case "http", "https":
-	default:
-		return nil, &polyerrors.Error{
-			Kind:    polyerrors.ErrRequestBuild,
-			Op:      "httpx.new",
-			Message: "base_url scheme must be http or https",
-		}
-	}
-	if parsed.RawQuery != "" || parsed.Fragment != "" {
-		return nil, &polyerrors.Error{
-			Kind:    polyerrors.ErrRequestBuild,
-			Op:      "httpx.new",
-			Message: "base_url must not contain query or fragment",
-		}
-	}
 
 	timeout := cfg.Timeout
 	if timeout <= 0 {
@@ -101,7 +85,7 @@ func NewWithHTTPClient(cfg ClientConfig, raw *http.Client) (*Client, error) {
 }
 
 func validateConfig(cfg ClientConfig) (*url.URL, int64, error) {
-	return validateConfigWithOp(cfg, "httpx.validate_config")
+	return validateConfigWithOp(cfg, "httpx.new_with_http_client")
 }
 
 func validateConfigWithOp(cfg ClientConfig, op string) (*url.URL, int64, error) {
@@ -122,6 +106,22 @@ func validateConfigWithOp(cfg ClientConfig, op string) (*url.URL, int64, error) 
 			Kind:    polyerrors.ErrRequestBuild,
 			Op:      op,
 			Message: "base_url must be an absolute URL",
+		}
+	}
+	switch parsed.Scheme {
+	case "http", "https":
+	default:
+		return nil, 0, &polyerrors.Error{
+			Kind:    polyerrors.ErrRequestBuild,
+			Op:      op,
+			Message: "base_url scheme must be http or https",
+		}
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, 0, &polyerrors.Error{
+			Kind:    polyerrors.ErrRequestBuild,
+			Op:      op,
+			Message: "base_url must not contain query or fragment",
 		}
 	}
 
