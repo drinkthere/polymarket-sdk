@@ -164,6 +164,33 @@ func TestClientListAllDefaultsLimitTo500(t *testing.T) {
 	}
 }
 
+func TestClientListAllNegativeLimitDefaultsTo500(t *testing.T) {
+	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("limit"); got != "500" {
+			t.Fatalf("limit query = %s, want 500", got)
+		}
+		if got := r.URL.Query().Get("offset"); got != "0" {
+			t.Fatalf("offset query = %s, want 0", got)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `[]`)
+	}))
+
+	client, err := NewClient(httpClient)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	resp, err := client.ListAll(context.Background(), ListRequest{Limit: -1})
+	if err != nil {
+		t.Fatalf("ListAll() error = %v", err)
+	}
+	if len(resp.Positions) != 0 {
+		t.Fatalf("len(resp.Positions) = %d, want 0", len(resp.Positions))
+	}
+}
+
 func TestClientListReturnsTypedDecodeError(t *testing.T) {
 	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
