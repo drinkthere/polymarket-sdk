@@ -60,17 +60,12 @@ func NewClient(httpClient *httpx.Client, authConfig polyauth.Config) (*Client, e
 }
 
 func (c *Client) GetBalance(ctx context.Context, req GetBalanceRequest) (GetBalanceResponse, error) {
-	creds, err := c.credentials(ctx, req.Credentials)
+	assetType, tokenID, signatureType, err := normalizeRequest("balances.get_balance", req.AssetType, req.TokenID, req.SignatureType)
 	if err != nil {
 		return GetBalanceResponse{}, err
 	}
 
-	assetType := req.AssetType
-	if assetType == "" {
-		assetType = AssetTypeCollateral
-	}
-	signatureType := effectiveSignatureType(req.SignatureType)
-	tokenID, err := validateConditionalTokenID("balances.get_balance", assetType, req.TokenID)
+	creds, err := c.credentials(ctx, req.Credentials)
 	if err != nil {
 		return GetBalanceResponse{}, err
 	}
@@ -109,17 +104,12 @@ func (c *Client) GetBalance(ctx context.Context, req GetBalanceRequest) (GetBala
 }
 
 func (c *Client) UpdateAllowance(ctx context.Context, req UpdateAllowanceRequest) (UpdateAllowanceResponse, error) {
-	creds, err := c.credentials(ctx, req.Credentials)
+	assetType, tokenID, signatureType, err := normalizeRequest("balances.update_allowance", req.AssetType, req.TokenID, req.SignatureType)
 	if err != nil {
 		return UpdateAllowanceResponse{}, err
 	}
 
-	assetType := req.AssetType
-	if assetType == "" {
-		assetType = AssetTypeCollateral
-	}
-	signatureType := effectiveSignatureType(req.SignatureType)
-	tokenID, err := validateConditionalTokenID("balances.update_allowance", assetType, req.TokenID)
+	creds, err := c.credentials(ctx, req.Credentials)
 	if err != nil {
 		return UpdateAllowanceResponse{}, err
 	}
@@ -178,14 +168,36 @@ func effectiveSignatureType(signatureType int) int {
 	return signatureType
 }
 
-func validateConditionalTokenID(op, assetType, tokenID string) (string, error) {
+func normalizeRequest(op, assetType, tokenID string, signatureType int) (string, string, int, error) {
+	normalizedAssetType, err := normalizeAssetType(op, assetType)
+	if err != nil {
+		return "", "", 0, err
+	}
+
 	trimmed := strings.TrimSpace(tokenID)
-	if assetType == AssetTypeConditional && trimmed == "" {
-		return "", &polyerrors.Error{
+	if normalizedAssetType == AssetTypeConditional && trimmed == "" {
+		return "", "", 0, &polyerrors.Error{
 			Kind:    polyerrors.ErrRequestBuild,
 			Op:      op,
 			Message: "token_id is required for conditional asset type",
 		}
 	}
-	return trimmed, nil
+	return normalizedAssetType, trimmed, effectiveSignatureType(signatureType), nil
+}
+
+func normalizeAssetType(op, assetType string) (string, error) {
+	trimmed := strings.TrimSpace(assetType)
+	if trimmed == "" {
+		return AssetTypeCollateral, nil
+	}
+	switch trimmed {
+	case AssetTypeCollateral, AssetTypeConditional:
+		return trimmed, nil
+	default:
+		return "", &polyerrors.Error{
+			Kind:    polyerrors.ErrRequestBuild,
+			Op:      op,
+			Message: "asset_type must be COLLATERAL or CONDITIONAL",
+		}
+	}
 }
