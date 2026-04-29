@@ -67,6 +67,39 @@ func TestNewClientWithCallerRequiresCaller(t *testing.T) {
 	}
 }
 
+func TestClientCloseIsNoOpWithoutCloser(t *testing.T) {
+	client, err := NewClientWithCaller(stubContractCaller{})
+	if err != nil {
+		t.Fatalf("NewClientWithCaller() error = %v", err)
+	}
+
+	if err := client.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+}
+
+func TestClientCloseUsesInjectedCloser(t *testing.T) {
+	caller := &stubClosableCaller{}
+
+	client, err := NewClientWithCaller(caller)
+	if err != nil {
+		t.Fatalf("NewClientWithCaller() error = %v", err)
+	}
+
+	if err := client.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if !caller.closed {
+		t.Fatal("expected injected closer to be closed")
+	}
+	if err := client.Close(); err != nil {
+		t.Fatalf("second Close() error = %v", err)
+	}
+	if caller.closeCalls != 1 {
+		t.Fatalf("close calls = %d want 1", caller.closeCalls)
+	}
+}
+
 func TestIsResolvedReturnsTrueWhenPayoutDenominatorPositive(t *testing.T) {
 	expectedCondition := "0x1234"
 	caller := stubContractCaller{
@@ -173,6 +206,32 @@ func TestBuildRedeemPositionsCalldataBuildsCallDataAndTarget(t *testing.T) {
 	assertBigIntSlice(t, args[3].([]*big.Int), []uint64{1, 2})
 }
 
+func TestBuildRedeemPositionsCalldataUsesLegacyUSDCOverrideForZeroCollateral(t *testing.T) {
+	legacy := USDCTokenAddress
+	override := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	USDCTokenAddress = override
+	defer func() {
+		USDCTokenAddress = legacy
+	}()
+
+	_, data, err := BuildRedeemPositionsCalldata(RedeemPositionsRequest{
+		ConditionID: "0x1234",
+		IndexSets:   []uint64{1, 2},
+	})
+	if err != nil {
+		t.Fatalf("BuildRedeemPositionsCalldata() error = %v", err)
+	}
+
+	method := mustTestABI(t, testCTFABIJSON).Methods["redeemPositions"]
+	args, err := method.Inputs.Unpack(data[4:])
+	if err != nil {
+		t.Fatalf("unpack inputs: %v", err)
+	}
+	if got := args[0].(common.Address); got != override {
+		t.Fatalf("collateral = %s want %s", got.Hex(), override.Hex())
+	}
+}
+
 func TestBuildNegRiskRedeemCalldataBuildsCallDataAndTarget(t *testing.T) {
 	target, data, err := BuildNegRiskRedeemCalldata(NegRiskRedeemRequest{
 		ConditionID: "0xabcdef",
@@ -249,7 +308,25 @@ type stubContractCaller struct {
 }
 
 func (s stubContractCaller) CallContract(_ context.Context, msg ethereum.CallMsg, _ *big.Int) ([]byte, error) {
+	if s.callContract == nil {
+		return nil, nil
+	}
 	return s.callContract(msg)
+}
+
+type stubClosableCaller struct {
+	closed     bool
+	closeCalls int
+}
+
+func (s *stubClosableCaller) CallContract(_ context.Context, _ ethereum.CallMsg, _ *big.Int) ([]byte, error) {
+	return nil, nil
+}
+
+func (s *stubClosableCaller) Close() error {
+	s.closed = true
+	s.closeCalls++
+	return nil
 }
 
 func mustTestABI(t *testing.T, raw string) abi.ABI {

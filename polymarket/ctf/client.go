@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -36,7 +37,10 @@ var (
 )
 
 type Client struct {
-	caller ContractCaller
+	caller    ContractCaller
+	closeFn   func() error
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func NewClient(cfg Config) (*Client, error) {
@@ -71,7 +75,24 @@ func NewClientWithCaller(caller ContractCaller) (*Client, error) {
 		}
 	}
 
-	return &Client{caller: caller}, nil
+	return &Client{
+		caller:  caller,
+		closeFn: optionalCloseFunc(caller),
+	}, nil
+}
+
+func (c *Client) Close() error {
+	if c == nil {
+		return nil
+	}
+
+	c.closeOnce.Do(func() {
+		if c.closeFn != nil {
+			c.closeErr = c.closeFn()
+		}
+	})
+
+	return c.closeErr
 }
 
 func (c *Client) IsResolved(ctx context.Context, conditionID string) (bool, error) {
@@ -241,7 +262,7 @@ func validateMergeRequest(req MergePositionsRequest) (common.Hash, []*big.Int, c
 
 func defaultCollateral(collateral common.Address) common.Address {
 	if collateral == (common.Address{}) {
-		return USDCAddress
+		return USDCTokenAddress
 	}
 	return collateral
 }
@@ -316,6 +337,22 @@ func isNilContractCaller(caller ContractCaller) bool {
 	default:
 		return false
 	}
+}
+
+func optionalCloseFunc(v any) func() error {
+	if v == nil {
+		return nil
+	}
+	if closer, ok := v.(interface{ Close() error }); ok {
+		return closer.Close
+	}
+	if closer, ok := v.(interface{ Close() }); ok {
+		return func() error {
+			closer.Close()
+			return nil
+		}
+	}
+	return nil
 }
 
 type simpleError string
