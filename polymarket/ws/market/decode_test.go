@@ -201,6 +201,29 @@ func TestDecodeEventsIgnoresControlFrameEventFallback(t *testing.T) {
 	}
 }
 
+func TestDecodeEventsMalformedLegacyEventFallbackReturnsTypedDecodeError(t *testing.T) {
+	t.Parallel()
+
+	_, err := DecodeEvents([]byte(`{"event":"book","asset_id":"1","bids":"oops"}`))
+	if err == nil {
+		t.Fatal("DecodeEvents() error = nil, want typed decode error")
+	}
+
+	typed, ok := err.(*polyerrors.Error)
+	if !ok {
+		t.Fatalf("DecodeEvents() error type = %T, want *errors.Error", err)
+	}
+	if typed.Kind != polyerrors.ErrDecode {
+		t.Fatalf("expected ErrDecode, got %v", typed.Kind)
+	}
+	if typed.Op != "market.decode_book" {
+		t.Fatalf("expected decode_book op, got %q", typed.Op)
+	}
+	if len(typed.RawBody) == 0 {
+		t.Fatal("expected raw body on typed decode error")
+	}
+}
+
 func TestDecodeEventsReturnsTypedDecodeError(t *testing.T) {
 	t.Parallel()
 

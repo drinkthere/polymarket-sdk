@@ -68,8 +68,8 @@ func TestChannelClient_Subscribe_Unsubscribe_ReadMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadMessage: %v", err)
 	}
-	if msg.MessageType != "book" {
-		t.Fatalf("expected message type book, got %q", msg.MessageType)
+	if msg.MessageType != "" {
+		t.Fatalf("expected empty message type for control frame, got %q", msg.MessageType)
 	}
 
 	if err := c.Unsubscribe(ctx, ChannelUnsubscribeRequest{AssetIDs: []string{"token_yes"}}); err != nil {
