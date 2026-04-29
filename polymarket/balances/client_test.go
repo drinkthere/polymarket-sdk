@@ -104,7 +104,56 @@ func TestGetBalanceSignsRequest(t *testing.T) {
 	}
 }
 
-func TestUpdateAllowance(t *testing.T) {
+func TestUpdateAllowanceDefaultsAndSignsRequest(t *testing.T) {
+	client := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/balance-allowance/update" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.URL.Query().Get("asset_type"); got != "COLLATERAL" {
+			t.Fatalf("asset_type = %q", got)
+		}
+		if got := r.URL.Query().Get("signature_type"); got != "2" {
+			t.Fatalf("signature_type = %q", got)
+		}
+		if got := r.Header.Get("POLY_API_KEY"); got != "key-1" {
+			t.Fatalf("POLY_API_KEY = %q", got)
+		}
+		if got := r.Header.Get("POLY_PASSPHRASE"); got != "pass-1" {
+			t.Fatalf("POLY_PASSPHRASE = %q", got)
+		}
+		if got := r.Header.Get("POLY_SIGNATURE"); got == "" {
+			t.Fatal("expected POLY_SIGNATURE header")
+		}
+		if got := r.Header.Get("POLY_TIMESTAMP"); got == "" {
+			t.Fatal("expected POLY_TIMESTAMP header")
+		}
+		if got := r.Header.Get("POLY_ADDRESS"); got != "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266" {
+			t.Fatalf("POLY_ADDRESS = %q", got)
+		}
+		if got := r.URL.Query().Get("token_id"); got != "" {
+			t.Fatalf("token_id = %q", got)
+		}
+		_, _ = io.WriteString(w, `{"updated":true}`)
+	}))
+
+	balancesClient, err := NewClient(client, validAuthConfig())
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	resp, err := balancesClient.UpdateAllowance(t.Context(), UpdateAllowanceRequest{
+		Credentials:   validCreds(),
+		SignatureType: 2,
+	})
+	if err != nil {
+		t.Fatalf("UpdateAllowance() error = %v", err)
+	}
+	if !resp.Updated {
+		t.Fatal("expected Updated=true")
+	}
+}
+
+func TestUpdateAllowanceIncludesConditionalTokenID(t *testing.T) {
 	client := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/balance-allowance/update" {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
@@ -112,11 +161,11 @@ func TestUpdateAllowance(t *testing.T) {
 		if got := r.URL.Query().Get("asset_type"); got != "CONDITIONAL" {
 			t.Fatalf("asset_type = %q", got)
 		}
+		if got := r.URL.Query().Get("signature_type"); got != "2" {
+			t.Fatalf("signature_type = %q", got)
+		}
 		if got := r.URL.Query().Get("token_id"); got != "123" {
 			t.Fatalf("token_id = %q", got)
-		}
-		if got := r.Header.Get("POLY_API_KEY"); got != "key-1" {
-			t.Fatalf("POLY_API_KEY = %q", got)
 		}
 		_, _ = io.WriteString(w, `{"updated":true}`)
 	}))

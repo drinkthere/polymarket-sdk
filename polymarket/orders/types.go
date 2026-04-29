@@ -46,24 +46,57 @@ type OpenOrder struct {
 }
 
 type GetUserTradesRequest struct {
-	Credentials polyauth.APICredentials
+	Credentials  polyauth.APICredentials
+	ID           string
+	MakerAddress string
+	Market       string
+	AssetID      string
+	Before       string
+	After        string
 }
 
 type GetUserTradesRawRequest struct {
-	Credentials polyauth.APICredentials
+	Credentials  polyauth.APICredentials
+	ID           string
+	MakerAddress string
+	Market       string
+	AssetID      string
+	Before       string
+	After        string
+}
+
+type UserTradeMakerOrder struct {
+	OrderID       string `json:"order_id"`
+	Owner         string `json:"owner"`
+	MakerAddress  string `json:"maker_address"`
+	MatchedAmount string `json:"matched_amount"`
+	Price         string `json:"price"`
+	FeeRateBPS    string `json:"fee_rate_bps"`
+	AssetID       string `json:"asset_id"`
+	Outcome       string `json:"outcome"`
+	Side          Side   `json:"side"`
 }
 
 type UserTrade struct {
-	ID        string `json:"id"`
-	AssetID   string `json:"asset_id"`
-	Market    string `json:"market"`
-	Side      Side   `json:"side"`
-	Price     string `json:"price"`
-	Size      string `json:"size"`
-	Status    string `json:"status"`
-	MatchTime string `json:"match_time"`
-	CreatedAt string `json:"created_at"`
-	Owner     string `json:"owner"`
+	ID              string                `json:"id"`
+	TakerOrderID    string                `json:"taker_order_id"`
+	AssetID         string                `json:"asset_id"`
+	Market          string                `json:"market"`
+	Side            Side                  `json:"side"`
+	Price           string                `json:"price"`
+	Size            string                `json:"size"`
+	FeeRateBPS      string                `json:"fee_rate_bps"`
+	Status          string                `json:"status"`
+	MatchTime       string                `json:"match_time"`
+	LastUpdate      string                `json:"last_update"`
+	CreatedAt       string                `json:"created_at"`
+	Owner           string                `json:"owner"`
+	Outcome         string                `json:"outcome"`
+	BucketIndex     int64                 `json:"bucket_index"`
+	MakerAddress    string                `json:"maker_address"`
+	TransactionHash string                `json:"transaction_hash"`
+	TraderSide      string                `json:"trader_side"`
+	MakerOrders     []UserTradeMakerOrder `json:"maker_orders"`
 }
 
 type PlaceMakerOrderRequest struct {

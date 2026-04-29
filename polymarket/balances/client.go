@@ -106,8 +106,13 @@ func (c *Client) UpdateAllowance(ctx context.Context, req UpdateAllowanceRequest
 		return UpdateAllowanceResponse{}, err
 	}
 
+	assetType := req.AssetType
+	if assetType == "" {
+		assetType = AssetTypeCollateral
+	}
+
 	query := url.Values{}
-	query.Set("asset_type", req.AssetType)
+	query.Set("asset_type", assetType)
 	query.Set("signature_type", strconv.Itoa(req.SignatureType))
 	if strings.TrimSpace(req.TokenID) != "" {
 		query.Set("token_id", req.TokenID)

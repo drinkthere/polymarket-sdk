@@ -117,10 +117,12 @@ func (c *Client) GetUserTrades(ctx context.Context, req GetUserTradesRequest) ([
 		return nil, err
 	}
 
+	baseQuery := userTradesBaseQuery(req.ID, req.MakerAddress, req.Market, req.AssetID, req.Before, req.After)
+
 	var all []UserTrade
 	nextCursor := "MA=="
 	for {
-		body, err := c.getUserTradesPage(ctx, creds, nextCursor, "orders.get_user_trades")
+		body, err := c.getUserTradesPage(ctx, creds, nextCursor, baseQuery, "orders.get_user_trades")
 		if err != nil {
 			return nil, err
 		}
@@ -147,10 +149,12 @@ func (c *Client) GetUserTradesRaw(ctx context.Context, req GetUserTradesRawReque
 		return nil, err
 	}
 
+	baseQuery := userTradesBaseQuery(req.ID, req.MakerAddress, req.Market, req.AssetID, req.Before, req.After)
+
 	var all []json.RawMessage
 	nextCursor := "MA=="
 	for {
-		body, err := c.getUserTradesPage(ctx, creds, nextCursor, "orders.get_user_trades_raw")
+		body, err := c.getUserTradesPage(ctx, creds, nextCursor, baseQuery, "orders.get_user_trades_raw")
 		if err != nil {
 			return nil, err
 		}
@@ -323,13 +327,13 @@ func (c *Client) credentials(ctx context.Context, creds polyauth.APICredentials)
 	return derived.APICredentials, nil
 }
 
-func (c *Client) getUserTradesPage(ctx context.Context, creds polyauth.APICredentials, nextCursor string, op string) ([]byte, error) {
-	query := url.Values{}
+func (c *Client) getUserTradesPage(ctx context.Context, creds polyauth.APICredentials, nextCursor string, baseQuery url.Values, op string) ([]byte, error) {
+	query := cloneQuery(baseQuery)
 	query.Set("next_cursor", nextCursor)
 
 	headers, err := c.signer.CreateL2Headers(creds, polyauth.L2HeaderArgs{
 		Method:      http.MethodGet,
-		RequestPath: "/data/trades",
+		RequestPath: "/trades",
 	}, polyauth.Now())
 	if err != nil {
 		return nil, authError(op, err)
@@ -338,10 +342,28 @@ func (c *Client) getUserTradesPage(ctx context.Context, creds polyauth.APICreden
 	return c.transport.DoJSON(ctx, polyauth.TransportRequest{
 		Op:      op,
 		Method:  http.MethodGet,
-		Path:    "/data/trades",
+		Path:    "/trades",
 		Query:   query,
 		Headers: headers.HTTPHeader(),
 	})
+}
+
+func userTradesBaseQuery(id, makerAddress, market, assetID, before, after string) url.Values {
+	query := url.Values{}
+	setQueryIfPresent(query, "id", id)
+	setQueryIfPresent(query, "maker_address", makerAddress)
+	setQueryIfPresent(query, "market", market)
+	setQueryIfPresent(query, "asset_id", assetID)
+	setQueryIfPresent(query, "before", before)
+	setQueryIfPresent(query, "after", after)
+	return query
+}
+
+func setQueryIfPresent(query url.Values, key, value string) {
+	if strings.TrimSpace(value) == "" {
+		return
+	}
+	query.Set(key, value)
 }
 
 func cloneQuery(src url.Values) url.Values {

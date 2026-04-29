@@ -157,15 +157,30 @@ func TestGetOpenOrdersPaginatesAndSignsRequests(t *testing.T) {
 	}
 }
 
-func TestGetUserTradesAndRaw(t *testing.T) {
+func TestGetUserTradesPaginatesWithFiltersAndDecodesFullPayload(t *testing.T) {
 	var calls int
 
 	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/data/trades" {
+		if r.Method != http.MethodGet || r.URL.Path != "/trades" {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 		if got := r.Header.Get("POLY_API_KEY"); got != "key-1" {
 			t.Fatalf("POLY_API_KEY = %q", got)
+		}
+		if got := r.Header.Get("POLY_SIGNATURE"); got == "" {
+			t.Fatal("expected POLY_SIGNATURE header")
+		}
+		for key, want := range map[string]string{
+			"id":            "trade-filter",
+			"maker_address": "0x1234567890123456789012345678901234567890",
+			"market":        "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"asset_id":      "asset-1",
+			"before":        "200",
+			"after":         "100",
+		} {
+			if got := r.URL.Query().Get(key); got != want {
+				t.Fatalf("%s = %q", key, got)
+			}
 		}
 		calls++
 		switch calls {
@@ -173,22 +188,12 @@ func TestGetUserTradesAndRaw(t *testing.T) {
 			if got := r.URL.Query().Get("next_cursor"); got != "MA==" {
 				t.Fatalf("next_cursor = %q", got)
 			}
-			_, _ = io.WriteString(w, `{"data":[{"id":"tr-1","asset_id":"asset-1","market":"mkt-1","side":"BUY","price":"0.41","size":"5","status":"MATCHED","match_time":"1","created_at":"1","owner":"owner"}],"next_cursor":"MQ=="}`)
+			_, _ = io.WriteString(w, `{"data":[{"id":"tr-1","taker_order_id":"take-1","asset_id":"asset-1","market":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","side":"BUY","price":"0.41","size":"5","fee_rate_bps":"30","status":"MATCHED","match_time":"1","last_update":"11","created_at":"1","owner":"owner","outcome":"YES","bucket_index":7,"maker_address":"0x1234567890123456789012345678901234567890","transaction_hash":"0xabc","trader_side":"TAKER","maker_orders":[{"order_id":"maker-1","owner":"maker-owner","maker_address":"0x9999999999999999999999999999999999999999","matched_amount":"3","price":"0.41","fee_rate_bps":"0","asset_id":"asset-1","outcome":"YES","side":"SELL"}]}],"next_cursor":"MQ=="}`)
 		case 2:
 			if got := r.URL.Query().Get("next_cursor"); got != "MQ==" {
 				t.Fatalf("next_cursor = %q", got)
 			}
-			_, _ = io.WriteString(w, `{"data":[{"id":"tr-2","asset_id":"asset-2","market":"mkt-2","side":"SELL","price":"0.52","size":"2","status":"MATCHED","match_time":"2","created_at":"2","owner":"owner"}],"next_cursor":"LTE="}`)
-		case 3:
-			if got := r.URL.Query().Get("next_cursor"); got != "MA==" {
-				t.Fatalf("next_cursor = %q", got)
-			}
-			_, _ = io.WriteString(w, `{"data":[{"id":"tr-1","asset_id":"asset-1","market":"mkt-1","side":"BUY","price":"0.41","size":"5","status":"MATCHED","match_time":"1","created_at":"1","owner":"owner"}],"next_cursor":"MQ=="}`)
-		case 4:
-			if got := r.URL.Query().Get("next_cursor"); got != "MQ==" {
-				t.Fatalf("next_cursor = %q", got)
-			}
-			_, _ = io.WriteString(w, `{"data":[{"id":"tr-2","asset_id":"asset-2","market":"mkt-2","side":"SELL","price":"0.52","size":"2","status":"MATCHED","match_time":"2","created_at":"2","owner":"owner"}],"next_cursor":"LTE="}`)
+			_, _ = io.WriteString(w, `{"data":[{"id":"tr-2","taker_order_id":"take-2","asset_id":"asset-2","market":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","side":"SELL","price":"0.52","size":"2","fee_rate_bps":"15","status":"CONFIRMED","match_time":"2","last_update":"12","created_at":"2","owner":"owner-2","outcome":"NO","bucket_index":8,"maker_address":"0x1234567890123456789012345678901234567890","transaction_hash":"0xdef","trader_side":"MAKER","maker_orders":[{"order_id":"maker-2","owner":"maker-owner-2","maker_address":"0x8888888888888888888888888888888888888888","matched_amount":"2","price":"0.52","fee_rate_bps":"5","asset_id":"asset-2","outcome":"NO","side":"BUY"}]}],"next_cursor":"LTE="}`)
 		default:
 			t.Fatalf("unexpected page %d", calls)
 		}
@@ -199,20 +204,105 @@ func TestGetUserTradesAndRaw(t *testing.T) {
 		t.Fatalf("NewClient() error = %v", err)
 	}
 
-	trades, err := client.GetUserTrades(t.Context(), GetUserTradesRequest{Credentials: validCreds()})
+	trades, err := client.GetUserTrades(t.Context(), GetUserTradesRequest{
+		Credentials:  validCreds(),
+		ID:           "trade-filter",
+		MakerAddress: "0x1234567890123456789012345678901234567890",
+		Market:       "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		AssetID:      "asset-1",
+		Before:       "200",
+		After:        "100",
+	})
 	if err != nil {
 		t.Fatalf("GetUserTrades() error = %v", err)
 	}
 	if len(trades) != 2 || trades[0].ID != "tr-1" || trades[1].ID != "tr-2" {
 		t.Fatalf("unexpected trades = %+v", trades)
 	}
+	if trades[0].TakerOrderID != "take-1" || trades[0].FeeRateBPS != "30" || trades[0].LastUpdate != "11" {
+		t.Fatalf("unexpected first trade metadata = %+v", trades[0])
+	}
+	if trades[0].Outcome != "YES" || trades[0].BucketIndex != 7 || trades[0].MakerAddress != "0x1234567890123456789012345678901234567890" {
+		t.Fatalf("unexpected first trade outcome fields = %+v", trades[0])
+	}
+	if trades[0].TransactionHash != "0xabc" || trades[0].TraderSide != "TAKER" {
+		t.Fatalf("unexpected first trade transaction fields = %+v", trades[0])
+	}
+	if len(trades[0].MakerOrders) != 1 {
+		t.Fatalf("expected 1 maker order, got %+v", trades[0].MakerOrders)
+	}
+	if got := trades[0].MakerOrders[0]; got.OrderID != "maker-1" || got.Owner != "maker-owner" || got.MakerAddress != "0x9999999999999999999999999999999999999999" || got.MatchedAmount != "3" || got.Price != "0.41" || got.FeeRateBPS != "0" || got.AssetID != "asset-1" || got.Outcome != "YES" || got.Side != "SELL" {
+		t.Fatalf("unexpected maker order = %+v", got)
+	}
+	if trades[1].TakerOrderID != "take-2" || trades[1].FeeRateBPS != "15" || trades[1].LastUpdate != "12" || trades[1].Outcome != "NO" || trades[1].BucketIndex != 8 || trades[1].TransactionHash != "0xdef" || trades[1].TraderSide != "MAKER" {
+		t.Fatalf("unexpected second trade = %+v", trades[1])
+	}
+}
 
-	raw, err := client.GetUserTradesRaw(t.Context(), GetUserTradesRawRequest{Credentials: validCreds()})
+func TestGetUserTradesRawPaginatesWithFilters(t *testing.T) {
+	var calls int
+
+	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/trades" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("POLY_API_KEY"); got != "key-1" {
+			t.Fatalf("POLY_API_KEY = %q", got)
+		}
+		for key, want := range map[string]string{
+			"id":            "trade-filter",
+			"maker_address": "0x1234567890123456789012345678901234567890",
+			"market":        "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"asset_id":      "asset-1",
+			"before":        "200",
+			"after":         "100",
+		} {
+			if got := r.URL.Query().Get(key); got != want {
+				t.Fatalf("%s = %q", key, got)
+			}
+		}
+		calls++
+		switch calls {
+		case 1:
+			if got := r.URL.Query().Get("next_cursor"); got != "MA==" {
+				t.Fatalf("next_cursor = %q", got)
+			}
+			_, _ = io.WriteString(w, `{"data":[{"id":"tr-1","taker_order_id":"take-1"}],"next_cursor":"MQ=="}`)
+		case 2:
+			if got := r.URL.Query().Get("next_cursor"); got != "MQ==" {
+				t.Fatalf("next_cursor = %q", got)
+			}
+			_, _ = io.WriteString(w, `{"data":[{"id":"tr-2","taker_order_id":"take-2"}],"next_cursor":"LTE="}`)
+		default:
+			t.Fatalf("unexpected page %d", calls)
+		}
+	}))
+
+	client, err := NewClient(httpClient, validAuthConfig())
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	raw, err := client.GetUserTradesRaw(t.Context(), GetUserTradesRawRequest{
+		Credentials:  validCreds(),
+		ID:           "trade-filter",
+		MakerAddress: "0x1234567890123456789012345678901234567890",
+		Market:       "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		AssetID:      "asset-1",
+		Before:       "200",
+		After:        "100",
+	})
 	if err != nil {
 		t.Fatalf("GetUserTradesRaw() error = %v", err)
 	}
 	if len(raw) != 2 {
 		t.Fatalf("len(raw) = %d", len(raw))
+	}
+	if string(raw[0]) != `{"id":"tr-1","taker_order_id":"take-1"}` {
+		t.Fatalf("unexpected raw[0] = %s", string(raw[0]))
+	}
+	if string(raw[1]) != `{"id":"tr-2","taker_order_id":"take-2"}` {
+		t.Fatalf("unexpected raw[1] = %s", string(raw[1]))
 	}
 }
 
