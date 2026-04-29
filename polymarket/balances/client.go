@@ -1,6 +1,7 @@
 package balances
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -18,6 +19,8 @@ type Client struct {
 	signer     *polyauth.Signer
 	transport  *polyauth.Transport
 }
+
+const defaultRequestSignatureType = 2
 
 func NewClient(httpClient *httpx.Client, authConfig polyauth.Config) (*Client, error) {
 	if httpClient == nil {
@@ -66,10 +69,11 @@ func (c *Client) GetBalance(ctx context.Context, req GetBalanceRequest) (GetBala
 	if assetType == "" {
 		assetType = AssetTypeCollateral
 	}
+	signatureType := effectiveSignatureType(req.SignatureType)
 
 	query := url.Values{}
 	query.Set("asset_type", string(assetType))
-	query.Set("signature_type", strconv.Itoa(req.SignatureType))
+	query.Set("signature_type", strconv.Itoa(signatureType))
 	if s := strings.TrimSpace(req.TokenID); s != "" {
 		query.Set("token_id", s)
 	}
@@ -110,10 +114,11 @@ func (c *Client) UpdateAllowance(ctx context.Context, req UpdateAllowanceRequest
 	if assetType == "" {
 		assetType = AssetTypeCollateral
 	}
+	signatureType := effectiveSignatureType(req.SignatureType)
 
 	query := url.Values{}
 	query.Set("asset_type", assetType)
-	query.Set("signature_type", strconv.Itoa(req.SignatureType))
+	query.Set("signature_type", strconv.Itoa(signatureType))
 	if tokenID := strings.TrimSpace(req.TokenID); tokenID != "" {
 		query.Set("token_id", tokenID)
 	}
@@ -136,6 +141,9 @@ func (c *Client) UpdateAllowance(ctx context.Context, req UpdateAllowanceRequest
 	if err != nil {
 		return UpdateAllowanceResponse{}, err
 	}
+	if len(bytes.TrimSpace(body)) == 0 {
+		return UpdateAllowanceResponse{}, nil
+	}
 
 	var resp UpdateAllowanceResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
@@ -153,4 +161,11 @@ func (c *Client) credentials(ctx context.Context, creds polyauth.APICredentials)
 		return polyauth.APICredentials{}, err
 	}
 	return derived.APICredentials, nil
+}
+
+func effectiveSignatureType(signatureType int) int {
+	if signatureType <= 0 {
+		return defaultRequestSignatureType
+	}
+	return signatureType
 }

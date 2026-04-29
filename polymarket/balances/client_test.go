@@ -80,7 +80,7 @@ func TestGetBalanceSignsRequest(t *testing.T) {
 		if got := r.URL.Query().Get("asset_type"); got != "COLLATERAL" {
 			t.Fatalf("asset_type = %q", got)
 		}
-		if got := r.URL.Query().Get("signature_type"); got != "0" {
+		if got := r.URL.Query().Get("signature_type"); got != "2" {
 			t.Fatalf("signature_type = %q", got)
 		}
 		_, _ = io.WriteString(w, `{"balance":"12.34","allowance":"56.78"}`)
@@ -143,13 +143,33 @@ func TestUpdateAllowanceDefaultsAndSignsRequest(t *testing.T) {
 
 	resp, err := balancesClient.UpdateAllowance(t.Context(), UpdateAllowanceRequest{
 		Credentials:   validCreds(),
-		SignatureType: 2,
+		SignatureType: 0,
 	})
 	if err != nil {
 		t.Fatalf("UpdateAllowance() error = %v", err)
 	}
 	if !resp.Updated {
 		t.Fatal("expected Updated=true")
+	}
+}
+
+func TestUpdateAllowanceAllowsEmptySuccessBody(t *testing.T) {
+	client := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+
+	balancesClient, err := NewClient(client, validAuthConfig())
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	resp, err := balancesClient.UpdateAllowance(t.Context(), UpdateAllowanceRequest{
+		Credentials:   validCreds(),
+		SignatureType: 0,
+	})
+	if err != nil {
+		t.Fatalf("UpdateAllowance() error = %v", err)
+	}
+	if resp.Updated {
+		t.Fatalf("expected zero-value response, got %+v", resp)
 	}
 }
 
