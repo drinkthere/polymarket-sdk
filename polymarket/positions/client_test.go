@@ -108,16 +108,16 @@ func TestClientListAllPaginatesUntilShortPage(t *testing.T) {
 		if q.Get("sizeThreshold") != "0" {
 			t.Fatalf("unexpected sizeThreshold query: %s", q.Get("sizeThreshold"))
 		}
-		if q.Get("limit") != "2" {
+		if q.Get("limit") != "500" {
 			t.Fatalf("unexpected limit query: %s", q.Get("limit"))
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		switch q.Get("offset") {
 		case "1":
-			_, _ = io.WriteString(w, `[{"asset":"tok-1","conditionId":"cond-1","size":1,"avgPrice":0.10,"title":"A","outcome":"Yes","side":"BUY","negativeRisk":false,"outcomeIndex":0},{"asset":"tok-2","conditionId":"cond-2","size":2,"avgPrice":0.20,"title":"B","outcome":"No","side":"SELL","negativeRisk":true,"outcomeIndex":1}]`)
-		case "3":
-			_, _ = io.WriteString(w, `[{"asset":"tok-3","conditionId":"cond-3","size":3,"avgPrice":0.30,"title":"C","outcome":"Yes","side":"BUY","negativeRisk":false,"outcomeIndex":0}]`)
+			_, _ = io.WriteString(w, positionsJSONPage(t, 1, 500))
+		case "501":
+			_, _ = io.WriteString(w, positionsJSONPage(t, 501, 3))
 		default:
 			t.Fatalf("unexpected offset query: %s", q.Get("offset"))
 		}
@@ -141,10 +141,10 @@ func TestClientListAllPaginatesUntilShortPage(t *testing.T) {
 	if requests != 2 {
 		t.Fatalf("requests = %d, want 2", requests)
 	}
-	if len(resp.Positions) != 3 {
-		t.Fatalf("len(resp.Positions) = %d, want 3", len(resp.Positions))
+	if len(resp.Positions) != 503 {
+		t.Fatalf("len(resp.Positions) = %d, want 503", len(resp.Positions))
 	}
-	if resp.Positions[0].Asset != "tok-1" || resp.Positions[1].Asset != "tok-2" || resp.Positions[2].Asset != "tok-3" {
+	if resp.Positions[0].Asset != "tok-1" || resp.Positions[499].Asset != "tok-500" || resp.Positions[500].Asset != "tok-501" || resp.Positions[len(resp.Positions)-1].Asset != "tok-503" {
 		t.Fatalf("unexpected position order: %+v", resp.Positions)
 	}
 }
@@ -307,6 +307,65 @@ func TestClientListAllFetchesTailPageAcrossMaxOffsetBoundary(t *testing.T) {
 	}
 }
 
+func TestClientListAllFetchesFullTailPageAcrossMaxOffsetBoundaryForSmallLimit(t *testing.T) {
+	var offsets []string
+	var limits []string
+	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		offset := r.URL.Query().Get("offset")
+		offsets = append(offsets, offset)
+		limits = append(limits, r.URL.Query().Get("limit"))
+
+		if got := r.URL.Query().Get("sizeThreshold"); got != "0" {
+			t.Fatalf("sizeThreshold query = %s, want 0", got)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		switch offset {
+		case "9998":
+			_, _ = io.WriteString(w, positionsJSONPage(t, 9998, 500))
+		case "10000":
+			_, _ = io.WriteString(w, positionsJSONPage(t, 10000, 500))
+		default:
+			t.Fatalf("unexpected offset query: %s", offset)
+		}
+	}))
+
+	client, err := NewClient(httpClient)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	resp, err := client.ListAll(context.Background(), ListRequest{
+		User:   validUser333,
+		Limit:  2,
+		Offset: 9998,
+	})
+	if err != nil {
+		t.Fatalf("ListAll() error = %v", err)
+	}
+	if len(offsets) != 2 || offsets[0] != "9998" || offsets[1] != "10000" {
+		t.Fatalf("offsets = %v, want [9998 10000]", offsets)
+	}
+	if len(limits) != 2 || limits[0] != "500" || limits[1] != "500" {
+		t.Fatalf("limits = %v, want [500 500]", limits)
+	}
+	if len(resp.Positions) != 502 {
+		t.Fatalf("len(resp.Positions) = %d, want 502", len(resp.Positions))
+	}
+	if resp.Positions[0].Asset != "tok-9998" {
+		t.Fatalf("first asset = %s, want tok-9998", resp.Positions[0].Asset)
+	}
+	if resp.Positions[499].Asset != "tok-10497" {
+		t.Fatalf("asset[499] = %s, want tok-10497", resp.Positions[499].Asset)
+	}
+	if resp.Positions[500].Asset != "tok-10498" {
+		t.Fatalf("asset[500] = %s, want tok-10498", resp.Positions[500].Asset)
+	}
+	if resp.Positions[501].Asset != "tok-10499" {
+		t.Fatalf("last asset = %s, want tok-10499", resp.Positions[501].Asset)
+	}
+}
+
 func TestClientListReturnsTypedDecodeError(t *testing.T) {
 	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -452,9 +511,9 @@ func TestClientListAllReturnsTypedProtocolErrorForInvalidDecodedPage(t *testing.
 
 		switch r.URL.Query().Get("offset") {
 		case "0":
-			_, _ = io.WriteString(w, `[{"asset":"tok-1","conditionId":"cond-1","size":1,"avgPrice":0.10,"title":"A","outcome":"Yes","side":"BUY","negativeRisk":false,"outcomeIndex":0}]`)
-		case "1":
-			_, _ = io.WriteString(w, `[{"conditionId":"cond-2","outcomeIndex":-1}]`)
+			_, _ = io.WriteString(w, positionsJSONPage(t, 0, 500))
+		case "500":
+			_, _ = io.WriteString(w, `[{"conditionId":"cond-500","outcomeIndex":-1}]`)
 		default:
 			t.Fatalf("unexpected offset query: %s", r.URL.Query().Get("offset"))
 		}
