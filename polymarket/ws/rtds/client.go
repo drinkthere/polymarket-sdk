@@ -32,8 +32,9 @@ type Client struct {
 type Channel string
 
 const (
-	ChannelCrypto Channel = "crypto"
-	ChannelEquity Channel = "equity"
+	ChannelCrypto    Channel = "crypto"
+	ChannelEquity    Channel = "equity"
+	ChannelChainlink Channel = "chainlink"
 )
 
 type SubscribeRequest struct {
@@ -51,9 +52,10 @@ type UnsubscribeRequest struct {
 type SubscribeItemRequest struct {
 	// Item is a Polymarket RTDS subscription selector in the form:
 	//   crypto:<symbol> / crypto_prices:<pair>
+	//   chainlink:<pair> / crypto_prices_chainlink:<pair>
 	//   equity:<symbol> / equity_prices:<symbol>
 	//
-	// Examples: "crypto:BTC", "crypto_prices:btcusdt", "equity:SPY".
+	// Examples: "crypto:BTC", "crypto_prices:btcusdt", "chainlink:eth/usd", "equity:SPY".
 	Item string
 }
 
@@ -101,14 +103,14 @@ func (c *Client) Subscribe(ctx context.Context, req SubscribeRequest) error {
 	if err != nil {
 		return err
 	}
-	topic, filters := topicAndFilter(ch, keySymbol)
+	topic, subType, filters := subscriptionSpec(ch, keySymbol)
 
 	payload := subscribePayload{
 		Action: "subscribe",
 		Subscriptions: []subscription{
 			{
 				Topic:   topic,
-				Type:    "update",
+				Type:    subType,
 				Filters: filters,
 			},
 		},
@@ -134,14 +136,14 @@ func (c *Client) Unsubscribe(ctx context.Context, req UnsubscribeRequest) error 
 	if err != nil {
 		return err
 	}
-	topic, filters := topicAndFilter(ch, keySymbol)
+	topic, subType, filters := subscriptionSpec(ch, keySymbol)
 
 	payload := subscribePayload{
 		Action: "unsubscribe",
 		Subscriptions: []subscription{
 			{
 				Topic:   topic,
-				Type:    "update",
+				Type:    subType,
 				Filters: filters,
 			},
 		},
@@ -161,6 +163,10 @@ func (c *Client) SubscribeCrypto(ctx context.Context, symbol string) error {
 
 func (c *Client) SubscribeEquity(ctx context.Context, symbol string) error {
 	return c.Subscribe(ctx, SubscribeRequest{Channel: ChannelEquity, Symbol: symbol})
+}
+
+func (c *Client) SubscribeChainlink(ctx context.Context, symbol string) error {
+	return c.Subscribe(ctx, SubscribeRequest{Channel: ChannelChainlink, Symbol: symbol})
 }
 
 func (c *Client) SubscribeItem(ctx context.Context, req SubscribeItemRequest) error {
@@ -202,16 +208,19 @@ type subscription struct {
 	Filters string `json:"filters"`
 }
 
-func topicAndFilter(ch Channel, keySymbol string) (string, string) {
+func subscriptionSpec(ch Channel, keySymbol string) (topic string, subType string, filters string) {
 	switch ch {
 	case ChannelCrypto:
 		// RTDS crypto topic expects filters as a JSON string.
-		return "crypto_prices", fmt.Sprintf(`{"symbol":"%s"}`, keySymbol)
+		return "crypto_prices", "update", fmt.Sprintf(`{"symbol":"%s"}`, keySymbol)
+	case ChannelChainlink:
+		// Chainlink topic expects lower-case slash-separated filters and wildcard type.
+		return "crypto_prices_chainlink", "*", fmt.Sprintf(`{"symbol":"%s"}`, keySymbol)
 	case ChannelEquity:
 		// RTDS equity topic expects filters as a JSON string.
-		return "equity_prices", fmt.Sprintf(`{"symbol":"%s"}`, keySymbol)
+		return "equity_prices", "update", fmt.Sprintf(`{"symbol":"%s"}`, keySymbol)
 	default:
-		return string(ch), keySymbol
+		return string(ch), "update", keySymbol
 	}
 }
 
@@ -231,6 +240,12 @@ func normalizeKeySymbol(ch Channel, symbol string) (string, error) {
 			s = strings.TrimSuffix(s, "usdt")
 		}
 		return s + "usdt", nil
+	case ChannelChainlink:
+		s := strings.ToLower(strings.TrimSpace(symbol))
+		if s == "" {
+			return "", &polyerrors.Error{Kind: polyerrors.ErrRequestBuild, Op: "rtds.normalize", Message: "symbol is required"}
+		}
+		return s, nil
 	case ChannelEquity:
 		s := strings.TrimSpace(symbol)
 		if s == "" {
@@ -259,6 +274,8 @@ func parseItem(item string) (Channel, string, error) {
 	switch left {
 	case "crypto", "crypto_prices":
 		return ChannelCrypto, right, nil
+	case "chainlink", "crypto_prices_chainlink":
+		return ChannelChainlink, right, nil
 	case "equity", "equity_prices":
 		return ChannelEquity, right, nil
 	default:
