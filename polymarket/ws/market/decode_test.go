@@ -396,6 +396,18 @@ func TestDecodeEventsIgnoresControlFrameEventFallback(t *testing.T) {
 	}
 }
 
+func TestDecodeEventsIgnoresRawPONGHeartbeat(t *testing.T) {
+	t.Parallel()
+
+	events, err := DecodeEvents([]byte("PONG"))
+	if err != nil {
+		t.Fatalf("DecodeEvents() error = %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("len(DecodeEvents()) = %d, want 0 for raw heartbeat", len(events))
+	}
+}
+
 func TestDecodeEventsMalformedLegacyEventFallbackReturnsTypedDecodeError(t *testing.T) {
 	t.Parallel()
 
@@ -513,5 +525,32 @@ func TestInferMessageTypeRecognizesDocumentedMarketKinds(t *testing.T) {
 				t.Fatalf("inferMessageType() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestInferMessageTypeReturnsEmptyForKnownAndUnknownMixedBatch(t *testing.T) {
+	t.Parallel()
+
+	payload := []byte(`[
+		{
+			"event_type":"book",
+			"asset_id":"token-yes",
+			"bids":[{"price":"0.48","size":"30"}],
+			"asks":[{"price":"0.52","size":"25"}],
+			"timestamp":"1700000000000"
+		},
+		{
+			"event_type":"mystery_event",
+			"asset_id":"token-no",
+			"timestamp":"1700000000100"
+		}
+	]`)
+
+	got, err := inferMessageType(payload)
+	if err != nil {
+		t.Fatalf("inferMessageType() error = %v", err)
+	}
+	if got != "" {
+		t.Fatalf("inferMessageType() = %q, want empty for known+unknown mixed batch", got)
 	}
 }

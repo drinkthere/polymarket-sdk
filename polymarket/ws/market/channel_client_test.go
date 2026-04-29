@@ -115,3 +115,46 @@ func TestChannelClient_Subscribe_Unsubscribe_ReadMessage(t *testing.T) {
 		t.Fatalf("expected custom_feature_enabled omitted on unsubscribe, got %v", unsub["custom_feature_enabled"])
 	}
 }
+
+func TestChannelClient_ReadMessage_IgnoresRawPONGHeartbeat(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		up := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+		c, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade: %v", err)
+			return
+		}
+		defer c.Close()
+
+		if err := c.WriteMessage(websocket.TextMessage, []byte("PONG")); err != nil {
+			t.Errorf("WriteMessage: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := NewChannelClient(Config{URL: "ws" + srv.URL[len("http"):]})
+	if err != nil {
+		t.Fatalf("NewChannelClient: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := c.Connect(ctx); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	msg, err := c.ReadMessage(ctx)
+	if err != nil {
+		t.Fatalf("ReadMessage: %v", err)
+	}
+	if msg.MessageType != "" {
+		t.Fatalf("MessageType = %q, want empty for raw heartbeat", msg.MessageType)
+	}
+	if string(msg.Raw) != "PONG" {
+		t.Fatalf("Raw = %q, want PONG", string(msg.Raw))
+	}
+}
