@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	polyerrors "github.com/drinkthere/polymarket-sdk/polymarket/errors"
 	"github.com/gorilla/websocket"
 )
 
@@ -156,5 +158,68 @@ func TestChannelClient_ReadMessage_IgnoresRawPONGHeartbeat(t *testing.T) {
 	}
 	if string(msg.Raw) != "PONG" {
 		t.Fatalf("Raw = %q, want PONG", string(msg.Raw))
+	}
+}
+
+func TestChannelClient_ReadMessage_ReturnsTypedDecodeErrorForUnknownExplicitBatch(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		up := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+		c, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade: %v", err)
+			return
+		}
+		defer c.Close()
+
+		payload := []byte(`[
+			{
+				"event_type":"mystery_event",
+				"asset_id":"token-no",
+				"timestamp":"1700000000100"
+			},
+			{
+				"event_type":"mystery_event_2",
+				"asset_id":"token-yes",
+				"timestamp":"1700000000200"
+			}
+		]`)
+		if err := c.WriteMessage(websocket.TextMessage, payload); err != nil {
+			t.Errorf("WriteMessage: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := NewChannelClient(Config{URL: "ws" + srv.URL[len("http"):]})
+	if err != nil {
+		t.Fatalf("NewChannelClient: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := c.Connect(ctx); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	_, err = c.ReadMessage(ctx)
+	if err == nil {
+		t.Fatal("ReadMessage() error = nil, want typed decode error")
+	}
+
+	typed, ok := err.(*polyerrors.Error)
+	if !ok {
+		t.Fatalf("ReadMessage() error type = %T, want *errors.Error", err)
+	}
+	if typed.Kind != polyerrors.ErrDecode {
+		t.Fatalf("expected ErrDecode, got %v", typed.Kind)
+	}
+	if typed.Op != "market.decode" {
+		t.Fatalf("expected market.decode op, got %q", typed.Op)
+	}
+	if !strings.Contains(string(typed.RawBody), `"event_type":"mystery_event"`) {
+		t.Fatalf("expected raw body for unknown item, got %q", string(typed.RawBody))
 	}
 }
