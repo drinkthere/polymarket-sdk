@@ -142,6 +142,9 @@ func TestClientListAllDefaultsLimitTo500(t *testing.T) {
 		if got := r.URL.Query().Get("user"); got != "0xlimit" {
 			t.Fatalf("user query = %s, want 0xlimit", got)
 		}
+		if got := r.URL.Query().Get("sizeThreshold"); got != "0" {
+			t.Fatalf("sizeThreshold query = %s, want 0", got)
+		}
 		if got := r.URL.Query().Get("limit"); got != "500" {
 			t.Fatalf("limit query = %s, want 500", got)
 		}
@@ -172,6 +175,9 @@ func TestClientListAllNegativeLimitDefaultsTo500(t *testing.T) {
 		if got := r.URL.Query().Get("user"); got != "0xlimit-neg" {
 			t.Fatalf("user query = %s, want 0xlimit-neg", got)
 		}
+		if got := r.URL.Query().Get("sizeThreshold"); got != "0" {
+			t.Fatalf("sizeThreshold query = %s, want 0", got)
+		}
 		if got := r.URL.Query().Get("limit"); got != "500" {
 			t.Fatalf("limit query = %s, want 500", got)
 		}
@@ -194,6 +200,53 @@ func TestClientListAllNegativeLimitDefaultsTo500(t *testing.T) {
 	}
 	if len(resp.Positions) != 0 {
 		t.Fatalf("len(resp.Positions) = %d, want 0", len(resp.Positions))
+	}
+}
+
+func TestClientListAllReturnsTypedRequestBuildErrorBeforeOffsetExceedsCeiling(t *testing.T) {
+	requests := 0
+	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if got := r.URL.Query().Get("offset"); got != "10000" {
+			t.Fatalf("offset query = %s, want 10000", got)
+		}
+		if got := r.URL.Query().Get("limit"); got != "2" {
+			t.Fatalf("limit query = %s, want 2", got)
+		}
+		if got := r.URL.Query().Get("sizeThreshold"); got != "0" {
+			t.Fatalf("sizeThreshold query = %s, want 0", got)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `[{"asset":"tok-1","conditionId":"cond-1","size":1,"avgPrice":0.10,"title":"A","outcome":"Yes","side":"BUY","negativeRisk":false,"outcomeIndex":0},{"asset":"tok-2","conditionId":"cond-2","size":2,"avgPrice":0.20,"title":"B","outcome":"No","side":"SELL","negativeRisk":true,"outcomeIndex":1}]`)
+	}))
+
+	client, err := NewClient(httpClient)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	_, err = client.ListAll(context.Background(), ListRequest{
+		User:   "0xcap",
+		Limit:  2,
+		Offset: 10000,
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1", requests)
+	}
+
+	var typed *polyerrors.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected *errors.Error, got %T", err)
+	}
+	if typed.Kind != polyerrors.ErrRequestBuild {
+		t.Fatalf("expected ErrRequestBuild, got %v", typed.Kind)
+	}
+	if typed.Op != "positions.list_all" {
+		t.Fatalf("expected op positions.list_all, got %s", typed.Op)
 	}
 }
 
