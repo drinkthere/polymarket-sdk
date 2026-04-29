@@ -288,6 +288,81 @@ func TestClientListReturnsTypedDecodeError(t *testing.T) {
 	}
 }
 
+func TestClientListReturnsTypedProtocolErrorForInvalidDecodedPosition(t *testing.T) {
+	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `[{}]`)
+	}))
+
+	client, err := NewClient(httpClient)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	_, err = client.List(context.Background(), ListRequest{User: validUser444})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var typed *polyerrors.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected *errors.Error, got %T", err)
+	}
+	if typed.Kind != polyerrors.ErrProtocol {
+		t.Fatalf("expected ErrProtocol, got %v", typed.Kind)
+	}
+	if typed.Op != "positions.list" {
+		t.Fatalf("expected op positions.list, got %s", typed.Op)
+	}
+	if typed.Method != http.MethodGet {
+		t.Fatalf("expected method GET, got %s", typed.Method)
+	}
+}
+
+func TestClientListAllReturnsTypedProtocolErrorForInvalidDecodedPage(t *testing.T) {
+	requests := 0
+	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+
+		switch r.URL.Query().Get("offset") {
+		case "0":
+			_, _ = io.WriteString(w, `[{"asset":"tok-1","conditionId":"cond-1","size":1,"avgPrice":0.10,"title":"A","outcome":"Yes","side":"BUY","negativeRisk":false,"outcomeIndex":0}]`)
+		case "1":
+			_, _ = io.WriteString(w, `[{"conditionId":"cond-2","outcomeIndex":-1}]`)
+		default:
+			t.Fatalf("unexpected offset query: %s", r.URL.Query().Get("offset"))
+		}
+	}))
+
+	client, err := NewClient(httpClient)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	_, err = client.ListAll(context.Background(), ListRequest{
+		User:  validUser444,
+		Limit: 1,
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
+	}
+
+	var typed *polyerrors.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected *errors.Error, got %T", err)
+	}
+	if typed.Kind != polyerrors.ErrProtocol {
+		t.Fatalf("expected ErrProtocol, got %v", typed.Kind)
+	}
+	if typed.Op != "positions.list" {
+		t.Fatalf("expected op positions.list, got %s", typed.Op)
+	}
+}
+
 func TestClientListValidatesUser(t *testing.T) {
 	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("server should not be called for request build errors")

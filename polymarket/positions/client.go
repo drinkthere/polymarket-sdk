@@ -81,6 +81,9 @@ func (c *Client) List(ctx context.Context, req ListRequest) (ListResponse, error
 	if err := c.do(ctx, listOp, "/positions", query, &positions); err != nil {
 		return ListResponse{}, err
 	}
+	if err := validatePositions(listOp, positions); err != nil {
+		return ListResponse{}, err
+	}
 	return ListResponse{Positions: positions}, nil
 }
 
@@ -226,6 +229,30 @@ func isNonNegativeNumericString(raw string) bool {
 
 	_, err := strconv.ParseFloat(raw, 64)
 	return err == nil
+}
+
+func validatePositions(op string, positions []Position) error {
+	for i, position := range positions {
+		if strings.TrimSpace(position.Asset) == "" {
+			return protocolError(op, "positions["+strconv.Itoa(i)+"].asset is required")
+		}
+		if strings.TrimSpace(position.ConditionID) == "" {
+			return protocolError(op, "positions["+strconv.Itoa(i)+"].conditionId is required")
+		}
+		if position.OutcomeIndex < 0 {
+			return protocolError(op, "positions["+strconv.Itoa(i)+"].outcomeIndex must be >= 0")
+		}
+	}
+	return nil
+}
+
+func protocolError(op string, message string) error {
+	return &polyerrors.Error{
+		Kind:    polyerrors.ErrProtocol,
+		Op:      op,
+		Method:  http.MethodGet,
+		Message: message,
+	}
 }
 
 func requestBuildError(op string, message string) error {
