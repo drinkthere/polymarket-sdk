@@ -10,9 +10,10 @@ import (
 )
 
 type Event struct {
-	Book        *BookEvent
-	PriceChange *PriceChangeEvent
-	BestBidAsk  *BestBidAskEvent
+	Book           *BookEvent
+	PriceChange    *PriceChangeEvent
+	BestBidAsk     *BestBidAskEvent
+	LastTradePrice *LastTradePriceEvent
 }
 
 type BookEvent struct {
@@ -57,6 +58,14 @@ type BestBidAskEvent struct {
 	Timestamp string `json:"timestamp"`
 }
 
+type LastTradePriceEvent struct {
+	EventType string `json:"event_type"`
+	Market    string `json:"market"`
+	AssetID   string `json:"asset_id"`
+	Price     string `json:"price"`
+	Timestamp string `json:"timestamp"`
+}
+
 func DecodeEvents(raw []byte) ([]Event, error) {
 	var batch []json.RawMessage
 	if err := json.Unmarshal(raw, &batch); err != nil {
@@ -74,17 +83,15 @@ func DecodeEvents(raw []byte) ([]Event, error) {
 			return nil, decodeError("market.decode", item, err)
 		}
 
-		if meta.isFallback() {
-			shouldDecode, err := classifyLegacyMarketEvent(meta.kind(), item)
-			if err != nil {
-				return nil, decodeError(decodeEventOp(meta.kind()), item, err)
-			}
-			if !shouldDecode {
-				continue
-			}
+		kind, shouldDecode, err := resolveEventKind(meta, item)
+		if err != nil {
+			return nil, decodeError(decodeEventOp(kind), item, err)
+		}
+		if !shouldDecode {
+			continue
 		}
 
-		switch meta.kind() {
+		switch kind {
 		case "book":
 			event, err := decodeBookEvent(item)
 			if err != nil {
@@ -103,6 +110,12 @@ func DecodeEvents(raw []byte) ([]Event, error) {
 				return nil, decodeError("market.decode_best_bid_ask", item, err)
 			}
 			events = append(events, Event{BestBidAsk: &event})
+		case "last_trade_price":
+			event, err := decodeLastTradePriceEvent(item)
+			if err != nil {
+				return nil, decodeError("market.decode_last_trade_price", item, err)
+			}
+			events = append(events, Event{LastTradePrice: &event})
 		}
 	}
 	return events, nil
@@ -122,6 +135,19 @@ func (m eventMeta) kind() string {
 
 func (m eventMeta) isFallback() bool {
 	return strings.TrimSpace(m.EventType) == "" && strings.TrimSpace(m.Event) != ""
+}
+
+func resolveEventKind(meta eventMeta, raw []byte) (string, bool, error) {
+	kind := meta.kind()
+	if kind == "" {
+		return classifyImplicitMarketEvent(raw)
+	}
+	if !meta.isFallback() {
+		return kind, true, nil
+	}
+
+	shouldDecode, err := classifyLegacyMarketEvent(kind, raw)
+	return kind, shouldDecode, err
 }
 
 func classifyLegacyMarketEvent(kind string, raw []byte) (bool, error) {
@@ -177,9 +203,49 @@ func classifyLegacyMarketEvent(kind string, raw []byte) (bool, error) {
 			return false, err
 		}
 		return true, nil
+	case "last_trade_price":
+		assetID, hasAssetID := payload["asset_id"]
+		price, hasPrice := payload["price"]
+		if !hasAssetID && !hasPrice {
+			return false, nil
+		}
+		if err := requireNonEmptyJSONString(assetID, hasAssetID, "asset_id"); err != nil {
+			return false, err
+		}
+		if err := requireJSONString(price, hasPrice, "price"); err != nil {
+			return false, err
+		}
+		return true, nil
 	default:
 		return false, nil
 	}
+}
+
+func classifyImplicitMarketEvent(raw []byte) (string, bool, error) {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return "", false, err
+	}
+
+	_, hasAssetID := payload["asset_id"]
+	bids, hasBids := payload["bids"]
+	asks, hasAsks := payload["asks"]
+	if !hasAssetID && !hasBids && !hasAsks {
+		return "", false, nil
+	}
+	if !hasBids && !hasAsks {
+		return "", false, nil
+	}
+	if err := requireNonEmptyJSONString(payload["asset_id"], hasAssetID, "asset_id"); err != nil {
+		return "book", false, err
+	}
+	if err := requireJSONArray(bids, hasBids, "bids"); err != nil {
+		return "book", false, err
+	}
+	if err := requireJSONArray(asks, hasAsks, "asks"); err != nil {
+		return "book", false, err
+	}
+	return "book", true, nil
 }
 
 func requireNonEmptyJSONString(raw json.RawMessage, ok bool, field string) error {
@@ -231,6 +297,8 @@ func decodeEventOp(kind string) string {
 		return "market.decode_price_change"
 	case "best_bid_ask":
 		return "market.decode_best_bid_ask"
+	case "last_trade_price":
+		return "market.decode_last_trade_price"
 	default:
 		return "market.decode"
 	}
@@ -244,15 +312,30 @@ func inferMessageType(raw []byte) (string, error) {
 	if len(events) == 0 {
 		return "", nil
 	}
-	switch {
-	case events[0].Book != nil:
-		return "book", nil
-	case events[0].PriceChange != nil:
-		return "price_change", nil
-	case events[0].BestBidAsk != nil:
-		return "best_bid_ask", nil
-	default:
+	kind := eventKind(events[0])
+	if kind == "" {
 		return "", nil
+	}
+	for _, event := range events[1:] {
+		if eventKind(event) != kind {
+			return "", nil
+		}
+	}
+	return kind, nil
+}
+
+func eventKind(event Event) string {
+	switch {
+	case event.Book != nil:
+		return "book"
+	case event.PriceChange != nil:
+		return "price_change"
+	case event.BestBidAsk != nil:
+		return "best_bid_ask"
+	case event.LastTradePrice != nil:
+		return "last_trade_price"
+	default:
+		return ""
 	}
 }
 
@@ -270,13 +353,14 @@ func decodeBookEvent(raw []byte) (BookEvent, error) {
 		return BookEvent{}, err
 	}
 
+	eventType := normalizedEventType(payload.kind(), "book")
 	timestamp, err := decodeTimestamp(payload.Timestamp)
 	if err != nil {
 		return BookEvent{}, err
 	}
 
 	return BookEvent{
-		EventType: payload.kind(),
+		EventType: eventType,
 		AssetID:   payload.AssetID,
 		Market:    payload.Market,
 		Bids:      payload.Bids,
@@ -297,13 +381,14 @@ func decodePriceChangeEvent(raw []byte) (PriceChangeEvent, error) {
 		return PriceChangeEvent{}, err
 	}
 
+	eventType := normalizedEventType(payload.kind(), "price_change")
 	timestamp, err := decodeTimestamp(payload.Timestamp)
 	if err != nil {
 		return PriceChangeEvent{}, err
 	}
 
 	return PriceChangeEvent{
-		EventType:    payload.kind(),
+		EventType:    eventType,
 		Market:       payload.Market,
 		PriceChanges: payload.PriceChanges,
 		Timestamp:    timestamp,
@@ -324,13 +409,14 @@ func decodeBestBidAskEvent(raw []byte) (BestBidAskEvent, error) {
 		return BestBidAskEvent{}, err
 	}
 
+	eventType := normalizedEventType(payload.kind(), "best_bid_ask")
 	timestamp, err := decodeTimestamp(payload.Timestamp)
 	if err != nil {
 		return BestBidAskEvent{}, err
 	}
 
 	return BestBidAskEvent{
-		EventType: payload.kind(),
+		EventType: eventType,
 		Market:    payload.Market,
 		AssetID:   payload.AssetID,
 		BestBid:   payload.BestBid,
@@ -338,6 +424,40 @@ func decodeBestBidAskEvent(raw []byte) (BestBidAskEvent, error) {
 		Spread:    payload.Spread,
 		Timestamp: timestamp,
 	}, nil
+}
+
+func decodeLastTradePriceEvent(raw []byte) (LastTradePriceEvent, error) {
+	var payload struct {
+		eventMeta
+		Market    string          `json:"market"`
+		AssetID   string          `json:"asset_id"`
+		Price     string          `json:"price"`
+		Timestamp json.RawMessage `json:"timestamp"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return LastTradePriceEvent{}, err
+	}
+
+	eventType := normalizedEventType(payload.kind(), "last_trade_price")
+	timestamp, err := decodeTimestamp(payload.Timestamp)
+	if err != nil {
+		return LastTradePriceEvent{}, err
+	}
+
+	return LastTradePriceEvent{
+		EventType: eventType,
+		Market:    payload.Market,
+		AssetID:   payload.AssetID,
+		Price:     payload.Price,
+		Timestamp: timestamp,
+	}, nil
+}
+
+func normalizedEventType(kind, fallback string) string {
+	if s := strings.TrimSpace(kind); s != "" {
+		return s
+	}
+	return fallback
 }
 
 func decodeTimestamp(raw json.RawMessage) (string, error) {
