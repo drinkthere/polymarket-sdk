@@ -115,9 +115,6 @@ func (c *Client) ListAll(ctx context.Context, req ListRequest) (ListResponse, er
 	if pageReq.Limit < 0 {
 		return ListResponse{}, requestBuildError(listAllOp, "limit must be >= 0")
 	}
-	if pageReq.Limit == 0 {
-		pageReq.Limit = defaultPageLimit
-	}
 	if pageReq.Offset < 0 {
 		return ListResponse{}, requestBuildError(listAllOp, "offset must be >= 0")
 	}
@@ -132,6 +129,8 @@ func (c *Client) ListAll(ctx context.Context, req ListRequest) (ListResponse, er
 	if pageReq.Offset > maxPageOffset {
 		return ListResponse{}, requestBuildError(listAllOp, "offset must be <= 10000")
 	}
+	// ListAll always pages at the API max to avoid losing tail rows near the offset ceiling.
+	pageReq.Limit = defaultPageLimit
 
 	var all []Position
 	skip := 0
