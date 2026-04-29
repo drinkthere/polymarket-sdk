@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"math/big"
+	"net"
 	"reflect"
 	"strconv"
 	"strings"
@@ -374,13 +375,37 @@ func classifyRPCError(err error) polyerrors.ErrorKind {
 	switch {
 	case errors.Is(err, context.Canceled):
 		return polyerrors.ErrClosed
-	case errors.Is(err, context.DeadlineExceeded):
+	case errors.Is(err, context.DeadlineExceeded) || isNetTimeoutErr(err):
 		return polyerrors.ErrTimeout
+	case isRequestBuildRPCError(err):
+		return polyerrors.ErrRequestBuild
 	case isClosedRPCError(err):
 		return polyerrors.ErrClosed
 	default:
 		return polyerrors.ErrNetwork
 	}
+}
+
+func isNetTimeoutErr(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
+func isRequestBuildRPCError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(message, "no known transport for url scheme") ||
+		strings.Contains(message, "unsupported protocol scheme") ||
+		strings.Contains(message, "missing protocol scheme") ||
+		strings.Contains(message, "first path segment in url cannot contain colon") ||
+		strings.HasPrefix(message, "parse ")
 }
 
 func isClosedRPCError(err error) bool {
