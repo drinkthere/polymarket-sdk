@@ -29,6 +29,9 @@ const testMergeABIJSON = `[
   {"inputs":[{"name":"collateralToken","type":"address"},{"name":"parentCollectionId","type":"bytes32"},{"name":"conditionId","type":"bytes32"},{"name":"indexSets","type":"uint256[]"},{"name":"amount","type":"uint256"}],"name":"mergePositions","outputs":[],"stateMutability":"nonpayable","type":"function"}
 ]`
 
+const validConditionID = "0x0000000000000000000000000000000000000000000000000000000000001234"
+const otherValidConditionID = "0x000000000000000000000000000000000000000000000000000000000000abcd"
+
 func TestNewClientRequiresRPCURL(t *testing.T) {
 	_, err := NewClient(Config{})
 	if err == nil {
@@ -164,7 +167,7 @@ func TestClientCloseDoesNotCloseInjectedCloser(t *testing.T) {
 }
 
 func TestIsResolvedReturnsTrueWhenPayoutDenominatorPositive(t *testing.T) {
-	expectedCondition := "0x1234"
+	expectedCondition := validConditionID
 	caller := stubContractCaller{
 		callContract: func(msg ethereum.CallMsg) ([]byte, error) {
 			if msg.To == nil {
@@ -225,12 +228,33 @@ func TestIsResolvedReturnsFalseWhenPayoutDenominatorZero(t *testing.T) {
 		t.Fatalf("NewClientWithCaller() error = %v", err)
 	}
 
-	resolved, err := client.IsResolved(t.Context(), "1234")
+	resolved, err := client.IsResolved(t.Context(), validConditionID)
 	if err != nil {
 		t.Fatalf("IsResolved() error = %v", err)
 	}
 	if resolved {
 		t.Fatal("expected unresolved")
+	}
+}
+
+func TestParseConditionIDRejectsShortValue(t *testing.T) {
+	_, err := parseConditionID("0x1234")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestParseConditionIDRejectsOddLengthValue(t *testing.T) {
+	_, err := parseConditionID("0x000000000000000000000000000000000000000000000000000000000000123")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestParseConditionIDRejectsNonHexValue(t *testing.T) {
+	_, err := parseConditionID("0x00000000000000000000000000000000000000000000000000000000000012gg")
+	if err == nil {
+		t.Fatal("expected error")
 	}
 }
 
@@ -258,7 +282,7 @@ func TestIsResolvedClassifiesCallErrors(t *testing.T) {
 				t.Fatalf("NewClientWithCaller() error = %v", err)
 			}
 
-			_, err = client.IsResolved(t.Context(), "0x1234")
+			_, err = client.IsResolved(t.Context(), validConditionID)
 			if err == nil {
 				t.Fatal("expected error")
 			}
@@ -278,7 +302,7 @@ func TestBuildRedeemPositionsCalldataBuildsCallDataAndTarget(t *testing.T) {
 	target, data, err := BuildRedeemPositionsCalldata(RedeemPositionsRequest{
 		CollateralToken:    USDCAddress,
 		ParentCollectionID: common.Hash{},
-		ConditionID:        "0x1234",
+		ConditionID:        validConditionID,
 		IndexSets:          []uint64{1, 2},
 	})
 	if err != nil {
@@ -303,10 +327,28 @@ func TestBuildRedeemPositionsCalldataBuildsCallDataAndTarget(t *testing.T) {
 	if got := args[1].([32]byte); got != (common.Hash{}) {
 		t.Fatalf("parent collection = %x", got)
 	}
-	if got := args[2].([32]byte); got != conditionIDToHash("0x1234") {
+	if got := args[2].([32]byte); got != conditionIDToHash(validConditionID) {
 		t.Fatalf("condition = %x", got)
 	}
 	assertBigIntSlice(t, args[3].([]*big.Int), []uint64{1, 2})
+}
+
+func TestBuildRedeemPositionsCalldataRejectsZeroIndexSet(t *testing.T) {
+	_, _, err := BuildRedeemPositionsCalldata(RedeemPositionsRequest{
+		ConditionID: validConditionID,
+		IndexSets:   []uint64{0},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var typed *polyerrors.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected typed error, got %T", err)
+	}
+	if typed.Kind != polyerrors.ErrRequestBuild {
+		t.Fatalf("kind = %q want %q", typed.Kind, polyerrors.ErrRequestBuild)
+	}
 }
 
 func TestBuildRedeemPositionsCalldataUsesLegacyUSDCOverrideForZeroCollateral(t *testing.T) {
@@ -320,7 +362,7 @@ func TestBuildRedeemPositionsCalldataUsesLegacyUSDCOverrideForZeroCollateral(t *
 	}()
 
 	_, data, err := BuildRedeemPositionsCalldata(RedeemPositionsRequest{
-		ConditionID: "0x1234",
+		ConditionID: validConditionID,
 		IndexSets:   []uint64{1, 2},
 	})
 	if err != nil {
@@ -348,7 +390,7 @@ func TestBuildRedeemPositionsCalldataUsesUSDCAddressOverrideForZeroCollateral(t 
 	}()
 
 	_, data, err := BuildRedeemPositionsCalldata(RedeemPositionsRequest{
-		ConditionID: "0x1234",
+		ConditionID: validConditionID,
 		IndexSets:   []uint64{1, 2},
 	})
 	if err != nil {
@@ -378,7 +420,7 @@ func TestBuildRedeemPositionsCalldataPrefersLegacyOverrideWhenBothDiverge(t *tes
 	}()
 
 	_, data, err := BuildRedeemPositionsCalldata(RedeemPositionsRequest{
-		ConditionID: "0x1234",
+		ConditionID: validConditionID,
 		IndexSets:   []uint64{1, 2},
 	})
 	if err != nil {
@@ -397,7 +439,7 @@ func TestBuildRedeemPositionsCalldataPrefersLegacyOverrideWhenBothDiverge(t *tes
 
 func TestBuildNegRiskRedeemCalldataBuildsCallDataAndTarget(t *testing.T) {
 	target, data, err := BuildNegRiskRedeemCalldata(NegRiskRedeemRequest{
-		ConditionID: "0xabcdef",
+		ConditionID: otherValidConditionID,
 		Amounts: []*big.Int{
 			big.NewInt(100),
 			big.NewInt(250),
@@ -419,7 +461,7 @@ func TestBuildNegRiskRedeemCalldataBuildsCallDataAndTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unpack inputs: %v", err)
 	}
-	if got := args[0].([32]byte); got != conditionIDToHash("0xabcdef") {
+	if got := args[0].([32]byte); got != conditionIDToHash(otherValidConditionID) {
 		t.Fatalf("condition = %x", got)
 	}
 	if got := args[1].([]*big.Int); len(got) != 2 || got[0].Cmp(big.NewInt(100)) != 0 || got[1].Cmp(big.NewInt(250)) != 0 {
@@ -431,7 +473,7 @@ func TestBuildMergePositionsCalldataBuildsCallDataAndTarget(t *testing.T) {
 	target, data, err := BuildMergePositionsCalldata(MergePositionsRequest{
 		CollateralToken:    USDCAddress,
 		ParentCollectionID: common.Hash{},
-		ConditionID:        "1234",
+		ConditionID:        validConditionID,
 		IndexSets:          []uint64{1, 2},
 		Amount:             big.NewInt(5_000_000),
 	})
@@ -457,13 +499,49 @@ func TestBuildMergePositionsCalldataBuildsCallDataAndTarget(t *testing.T) {
 	if got := args[1].([32]byte); got != (common.Hash{}) {
 		t.Fatalf("parent collection = %x", got)
 	}
-	if got := args[2].([32]byte); got != conditionIDToHash("1234") {
+	if got := args[2].([32]byte); got != conditionIDToHash(validConditionID) {
 		t.Fatalf("condition = %x", got)
 	}
 	assertBigIntSlice(t, args[3].([]*big.Int), []uint64{1, 2})
 	if got := args[4].(*big.Int); got.Cmp(big.NewInt(5_000_000)) != 0 {
 		t.Fatalf("amount = %s", got)
 	}
+}
+
+func TestBuildMergePositionsCalldataRejectsSingleIndexSet(t *testing.T) {
+	_, _, err := BuildMergePositionsCalldata(MergePositionsRequest{
+		ConditionID: validConditionID,
+		IndexSets:   []uint64{1},
+		Amount:      big.NewInt(1),
+	})
+	assertRequestBuildError(t, err)
+}
+
+func TestBuildMergePositionsCalldataRejectsZeroIndexSet(t *testing.T) {
+	_, _, err := BuildMergePositionsCalldata(MergePositionsRequest{
+		ConditionID: validConditionID,
+		IndexSets:   []uint64{0, 2},
+		Amount:      big.NewInt(1),
+	})
+	assertRequestBuildError(t, err)
+}
+
+func TestBuildMergePositionsCalldataRejectsOverlappingIndexSets(t *testing.T) {
+	_, _, err := BuildMergePositionsCalldata(MergePositionsRequest{
+		ConditionID: validConditionID,
+		IndexSets:   []uint64{1, 3},
+		Amount:      big.NewInt(1),
+	})
+	assertRequestBuildError(t, err)
+}
+
+func TestBuildMergePositionsCalldataRejectsDuplicateIndexSets(t *testing.T) {
+	_, _, err := BuildMergePositionsCalldata(MergePositionsRequest{
+		ConditionID: validConditionID,
+		IndexSets:   []uint64{2, 2},
+		Amount:      big.NewInt(1),
+	})
+	assertRequestBuildError(t, err)
 }
 
 type stubContractCaller struct {
@@ -530,5 +608,21 @@ func assertBigIntSlice(t *testing.T, got []*big.Int, want []uint64) {
 		if got[i].Cmp(new(big.Int).SetUint64(want[i])) != 0 {
 			t.Fatalf("got[%d] = %s want %d", i, got[i], want[i])
 		}
+	}
+}
+
+func assertRequestBuildError(t *testing.T, err error) {
+	t.Helper()
+
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var typed *polyerrors.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected typed error, got %T", err)
+	}
+	if typed.Kind != polyerrors.ErrRequestBuild {
+		t.Fatalf("kind = %q want %q", typed.Kind, polyerrors.ErrRequestBuild)
 	}
 }

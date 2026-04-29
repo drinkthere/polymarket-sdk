@@ -255,11 +255,12 @@ func validateRedeemRequest(req RedeemPositionsRequest) (common.Hash, []*big.Int,
 	if err != nil {
 		return common.Hash{}, nil, common.Address{}, requestError("ctf.redeem_positions", err)
 	}
-	if len(req.IndexSets) == 0 {
-		return common.Hash{}, nil, common.Address{}, requestError("ctf.redeem_positions", errMissing("index_sets is required"))
+	indexSets, err := validateIndexSets(req.IndexSets, 1, false)
+	if err != nil {
+		return common.Hash{}, nil, common.Address{}, requestError("ctf.redeem_positions", err)
 	}
 
-	return conditionHash, uint64SliceToBigInts(req.IndexSets), defaultCollateral(req.CollateralToken), nil
+	return conditionHash, indexSets, defaultCollateral(req.CollateralToken), nil
 }
 
 func validateMergeRequest(req MergePositionsRequest) (common.Hash, []*big.Int, common.Address, error) {
@@ -267,8 +268,9 @@ func validateMergeRequest(req MergePositionsRequest) (common.Hash, []*big.Int, c
 	if err != nil {
 		return common.Hash{}, nil, common.Address{}, requestError("ctf.merge_positions", err)
 	}
-	if len(req.IndexSets) == 0 {
-		return common.Hash{}, nil, common.Address{}, requestError("ctf.merge_positions", errMissing("index_sets is required"))
+	indexSets, err := validateIndexSets(req.IndexSets, 2, true)
+	if err != nil {
+		return common.Hash{}, nil, common.Address{}, requestError("ctf.merge_positions", err)
 	}
 	if req.Amount == nil {
 		return common.Hash{}, nil, common.Address{}, requestError("ctf.merge_positions", errMissing("amount is required"))
@@ -277,7 +279,7 @@ func validateMergeRequest(req MergePositionsRequest) (common.Hash, []*big.Int, c
 		return common.Hash{}, nil, common.Address{}, requestError("ctf.merge_positions", errMissing("amount must be non-negative"))
 	}
 
-	return conditionHash, uint64SliceToBigInts(req.IndexSets), defaultCollateral(req.CollateralToken), nil
+	return conditionHash, indexSets, defaultCollateral(req.CollateralToken), nil
 }
 
 func defaultCollateral(collateral common.Address) common.Address {
@@ -321,19 +323,42 @@ func parseConditionID(conditionID string) (common.Hash, error) {
 	if normalized == "" {
 		return common.Hash{}, errMissing("condition_id is required")
 	}
-	if len(normalized)%2 == 1 {
-		normalized = "0" + normalized
+	if len(normalized) != common.HashLength*2 {
+		return common.Hash{}, errMissing("condition_id must be exactly 32 bytes (64 hex chars)")
 	}
 
 	decoded, err := hex.DecodeString(normalized)
 	if err != nil {
 		return common.Hash{}, err
 	}
-	if len(decoded) > common.HashLength {
-		return common.Hash{}, errMissing("condition_id exceeds 32 bytes")
-	}
 
 	return common.BytesToHash(decoded), nil
+}
+
+func validateIndexSets(indexSets []uint64, minCount int, requireDisjoint bool) ([]*big.Int, error) {
+	if len(indexSets) < minCount {
+		if minCount == 1 {
+			return nil, errMissing("index_sets is required")
+		}
+		return nil, errMissing("at least two index_sets are required")
+	}
+
+	out := make([]*big.Int, len(indexSets))
+	for i, indexSet := range indexSets {
+		if indexSet == 0 {
+			return nil, errMissing("index_sets must be > 0")
+		}
+		if requireDisjoint {
+			for j := 0; j < i; j++ {
+				if indexSet&indexSets[j] != 0 {
+					return nil, errMissing("index_sets must be unique and non-overlapping")
+				}
+			}
+		}
+		out[i] = new(big.Int).SetUint64(indexSet)
+	}
+
+	return out, nil
 }
 
 func mustParseABI(raw string) abi.ABI {
