@@ -139,6 +139,9 @@ func TestClientListAllPaginatesUntilShortPage(t *testing.T) {
 
 func TestClientListAllDefaultsLimitTo500(t *testing.T) {
 	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("user"); got != "0xlimit" {
+			t.Fatalf("user query = %s, want 0xlimit", got)
+		}
 		if got := r.URL.Query().Get("limit"); got != "500" {
 			t.Fatalf("limit query = %s, want 500", got)
 		}
@@ -155,7 +158,7 @@ func TestClientListAllDefaultsLimitTo500(t *testing.T) {
 		t.Fatalf("NewClient() error = %v", err)
 	}
 
-	resp, err := client.ListAll(context.Background(), ListRequest{})
+	resp, err := client.ListAll(context.Background(), ListRequest{User: "0xlimit"})
 	if err != nil {
 		t.Fatalf("ListAll() error = %v", err)
 	}
@@ -166,6 +169,9 @@ func TestClientListAllDefaultsLimitTo500(t *testing.T) {
 
 func TestClientListAllNegativeLimitDefaultsTo500(t *testing.T) {
 	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("user"); got != "0xlimit-neg" {
+			t.Fatalf("user query = %s, want 0xlimit-neg", got)
+		}
 		if got := r.URL.Query().Get("limit"); got != "500" {
 			t.Fatalf("limit query = %s, want 500", got)
 		}
@@ -182,7 +188,7 @@ func TestClientListAllNegativeLimitDefaultsTo500(t *testing.T) {
 		t.Fatalf("NewClient() error = %v", err)
 	}
 
-	resp, err := client.ListAll(context.Background(), ListRequest{Limit: -1})
+	resp, err := client.ListAll(context.Background(), ListRequest{User: "0xlimit-neg", Limit: -1})
 	if err != nil {
 		t.Fatalf("ListAll() error = %v", err)
 	}
@@ -202,7 +208,7 @@ func TestClientListReturnsTypedDecodeError(t *testing.T) {
 		t.Fatalf("NewClient() error = %v", err)
 	}
 
-	_, err = client.List(context.Background(), ListRequest{})
+	_, err = client.List(context.Background(), ListRequest{User: "0xdecode"})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -222,6 +228,43 @@ func TestClientListReturnsTypedDecodeError(t *testing.T) {
 	}
 	if string(typed.RawBody) != "{" {
 		t.Fatalf("unexpected raw body: %q", string(typed.RawBody))
+	}
+}
+
+func TestClientListRequiresUser(t *testing.T) {
+	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("server should not be called for request build errors")
+	}))
+
+	client, err := NewClient(httpClient)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		user string
+	}{
+		{name: "empty", user: ""},
+		{name: "whitespace", user: " \t\n "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := client.List(context.Background(), ListRequest{User: tc.user})
+			if err == nil {
+				t.Fatal("expected error")
+			}
+
+			var typed *polyerrors.Error
+			if !errors.As(err, &typed) {
+				t.Fatalf("expected *errors.Error, got %T", err)
+			}
+			if typed.Kind != polyerrors.ErrRequestBuild {
+				t.Fatalf("expected ErrRequestBuild, got %v", typed.Kind)
+			}
+			if typed.Op != "positions.list" {
+				t.Fatalf("expected op positions.list, got %s", typed.Op)
+			}
+		})
 	}
 }
 

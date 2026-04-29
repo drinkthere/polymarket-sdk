@@ -33,10 +33,17 @@ func NewClient(httpClient *httpx.Client) (*Client, error) {
 }
 
 func (c *Client) List(ctx context.Context, req ListRequest) (ListResponse, error) {
-	query := url.Values{}
-	if user := strings.TrimSpace(req.User); user != "" {
-		query.Set("user", user)
+	user := strings.TrimSpace(req.User)
+	if user == "" {
+		return ListResponse{}, &polyerrors.Error{
+			Kind:    polyerrors.ErrRequestBuild,
+			Op:      listOp,
+			Message: "user is required",
+		}
 	}
+
+	query := url.Values{}
+	query.Set("user", user)
 	if req.Redeemable != nil {
 		query.Set("redeemable", strconv.FormatBool(*req.Redeemable))
 	}

@@ -49,10 +49,7 @@ func New(cfg ClientConfig) (*Client, error) {
 		return nil, err
 	}
 
-	timeout := cfg.Timeout
-	if timeout <= 0 {
-		timeout = defaultTimeout
-	}
+	timeout := effectiveTimeout(cfg.Timeout)
 
 	return &Client{
 		baseURL:          parsed,
@@ -77,11 +74,21 @@ func NewWithHTTPClient(cfg ClientConfig, raw *http.Client) (*Client, error) {
 		return nil, err
 	}
 
+	cloned := *raw
+	cloned.Timeout = effectiveTimeout(cfg.Timeout)
+
 	return &Client{
 		baseURL:          base,
-		httpClient:       raw,
+		httpClient:       &cloned,
 		maxResponseBytes: maxResp,
 	}, nil
+}
+
+func effectiveTimeout(timeout time.Duration) time.Duration {
+	if timeout <= 0 {
+		return defaultTimeout
+	}
+	return timeout
 }
 
 func validateConfig(cfg ClientConfig) (*url.URL, int64, error) {
