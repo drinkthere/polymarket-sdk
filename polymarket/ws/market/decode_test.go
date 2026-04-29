@@ -129,6 +129,59 @@ func TestDecodeEventsAcceptsEventFallback(t *testing.T) {
 	}
 }
 
+func TestDecodeEventsAcceptsBookSnapshotWithoutEventType(t *testing.T) {
+	t.Parallel()
+
+	payload := []byte(`{
+		"asset_id":"65818619657568813474341868652308942079804919287380422192892211131408793125422",
+		"market":"0xbd31dc8a20211944f6b70f31557f1001557b59905b7738480ca09bd4532f84af",
+		"bids":[{"price":".48","size":"30"}],
+		"asks":[{"price":".52","size":"25"}],
+		"timestamp":"123456789000",
+		"hash":"0x0...."
+	}`)
+
+	events, err := DecodeEvents(payload)
+	if err != nil {
+		t.Fatalf("DecodeEvents() error = %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("len(DecodeEvents()) = %d, want 1", len(events))
+	}
+	if events[0].Book == nil {
+		t.Fatalf("expected book event, got %+v", events[0])
+	}
+	if events[0].Book.EventType != "book" {
+		t.Fatalf("book event type = %q, want book", events[0].Book.EventType)
+	}
+}
+
+func TestDecodeEventsDecodesLastTradePrice(t *testing.T) {
+	t.Parallel()
+
+	payload := []byte(`{
+		"event_type":"last_trade_price",
+		"asset_id":"token-yes",
+		"market":"0xbd31dc8a20211944f6b70f31557f1001557b59905b7738480ca09bd4532f84af",
+		"price":"0.61",
+		"timestamp":"1700000000000"
+	}`)
+
+	events, err := DecodeEvents(payload)
+	if err != nil {
+		t.Fatalf("DecodeEvents() error = %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("len(DecodeEvents()) = %d, want 1", len(events))
+	}
+	if events[0].LastTradePrice == nil {
+		t.Fatalf("expected last_trade_price event, got %+v", events[0])
+	}
+	if got := events[0].LastTradePrice; got.AssetID != "token-yes" || got.Price != "0.61" || got.Timestamp != "1700000000000" {
+		t.Fatalf("unexpected last_trade_price payload: %+v", got)
+	}
+}
+
 func TestDecodeEventsAcceptsNumericTimestamps(t *testing.T) {
 	t.Parallel()
 
@@ -166,6 +219,13 @@ func TestDecodeEventsAcceptsNumericTimestamps(t *testing.T) {
 			"best_ask":"0.77",
 			"spread":"0.04",
 			"timestamp":1766789469958
+		},
+		{
+			"event_type":"last_trade_price",
+			"asset_id":"token-yes",
+			"market":"0xbd31dc8a20211944f6b70f31557f1001557b59905b7738480ca09bd4532f84af",
+			"price":"0.61",
+			"timestamp":1700000000000
 		}
 	]`)
 
@@ -173,8 +233,8 @@ func TestDecodeEventsAcceptsNumericTimestamps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeEvents() error = %v", err)
 	}
-	if len(events) != 3 {
-		t.Fatalf("len(DecodeEvents()) = %d, want 3", len(events))
+	if len(events) != 4 {
+		t.Fatalf("len(DecodeEvents()) = %d, want 4", len(events))
 	}
 	if events[0].Book == nil || events[0].Book.Timestamp != "123456789000" {
 		t.Fatalf("unexpected numeric book timestamp decode: %+v", events[0])
@@ -184,6 +244,9 @@ func TestDecodeEventsAcceptsNumericTimestamps(t *testing.T) {
 	}
 	if events[2].BestBidAsk == nil || events[2].BestBidAsk.Timestamp != "1766789469958" {
 		t.Fatalf("unexpected numeric best_bid_ask timestamp decode: %+v", events[2])
+	}
+	if events[3].LastTradePrice == nil || events[3].LastTradePrice.Timestamp != "1700000000000" {
+		t.Fatalf("unexpected numeric last_trade_price timestamp decode: %+v", events[3])
 	}
 }
 
