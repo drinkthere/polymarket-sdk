@@ -73,6 +73,10 @@ func DecodeEvents(raw []byte) ([]Event, error) {
 			return nil, decodeError("market.decode", item, err)
 		}
 
+		if meta.isFallback() && !isLegacyMarketEvent(meta.kind(), item) {
+			continue
+		}
+
 		switch meta.kind() {
 		case "book":
 			event, err := decodeBookEvent(item)
@@ -107,6 +111,45 @@ func (m eventMeta) kind() string {
 		return s
 	}
 	return strings.TrimSpace(m.Event)
+}
+
+func (m eventMeta) isFallback() bool {
+	return strings.TrimSpace(m.EventType) == "" && strings.TrimSpace(m.Event) != ""
+}
+
+func isLegacyMarketEvent(kind string, raw []byte) bool {
+	switch kind {
+	case "book":
+		var payload struct {
+			AssetID string            `json:"asset_id"`
+			Bids    []json.RawMessage `json:"bids"`
+			Asks    []json.RawMessage `json:"asks"`
+		}
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return false
+		}
+		return strings.TrimSpace(payload.AssetID) != "" && (payload.Bids != nil || payload.Asks != nil)
+	case "best_bid_ask":
+		var payload struct {
+			AssetID string  `json:"asset_id"`
+			BestBid *string `json:"best_bid"`
+			BestAsk *string `json:"best_ask"`
+		}
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return false
+		}
+		return strings.TrimSpace(payload.AssetID) != "" && payload.BestBid != nil && payload.BestAsk != nil
+	case "price_change":
+		var payload struct {
+			PriceChanges []json.RawMessage `json:"price_changes"`
+		}
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return false
+		}
+		return payload.PriceChanges != nil
+	default:
+		return false
+	}
 }
 
 func decodeBookEvent(raw []byte) (BookEvent, error) {

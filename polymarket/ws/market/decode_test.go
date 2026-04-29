@@ -187,6 +187,20 @@ func TestDecodeEventsAcceptsNumericTimestamps(t *testing.T) {
 	}
 }
 
+func TestDecodeEventsIgnoresControlFrameEventFallback(t *testing.T) {
+	t.Parallel()
+
+	payload := []byte(`{"event":"book","assets_ids":["token_yes"]}`)
+
+	events, err := DecodeEvents(payload)
+	if err != nil {
+		t.Fatalf("DecodeEvents() error = %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("len(DecodeEvents()) = %d, want 0 for control frame", len(events))
+	}
+}
+
 func TestDecodeEventsReturnsTypedDecodeError(t *testing.T) {
 	t.Parallel()
 
