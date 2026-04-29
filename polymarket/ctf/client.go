@@ -63,10 +63,17 @@ func NewClient(cfg Config) (*Client, error) {
 		}
 	}
 
-	return NewClientWithCaller(eth)
+	return newClient(eth, func() error {
+		eth.Close()
+		return nil
+	})
 }
 
 func NewClientWithCaller(caller ContractCaller) (*Client, error) {
+	return newClient(caller, nil)
+}
+
+func newClient(caller ContractCaller, closeFn func() error) (*Client, error) {
 	if isNilContractCaller(caller) {
 		return nil, &polyerrors.Error{
 			Kind:    polyerrors.ErrRequestBuild,
@@ -77,7 +84,7 @@ func NewClientWithCaller(caller ContractCaller) (*Client, error) {
 
 	return &Client{
 		caller:  caller,
-		closeFn: optionalCloseFunc(caller),
+		closeFn: closeFn,
 	}, nil
 }
 
@@ -262,7 +269,19 @@ func validateMergeRequest(req MergePositionsRequest) (common.Hash, []*big.Int, c
 
 func defaultCollateral(collateral common.Address) common.Address {
 	if collateral == (common.Address{}) {
-		return USDCTokenAddress
+		legacyOverridden := USDCTokenAddress != canonicalUSDCAddress
+		modernOverridden := USDCAddress != canonicalUSDCAddress
+
+		switch {
+		case legacyOverridden && !modernOverridden:
+			return USDCTokenAddress
+		case modernOverridden && !legacyOverridden:
+			return USDCAddress
+		case legacyOverridden && modernOverridden:
+			return USDCTokenAddress
+		default:
+			return canonicalUSDCAddress
+		}
 	}
 	return collateral
 }
@@ -337,22 +356,6 @@ func isNilContractCaller(caller ContractCaller) bool {
 	default:
 		return false
 	}
-}
-
-func optionalCloseFunc(v any) func() error {
-	if v == nil {
-		return nil
-	}
-	if closer, ok := v.(interface{ Close() error }); ok {
-		return closer.Close
-	}
-	if closer, ok := v.(interface{ Close() }); ok {
-		return func() error {
-			closer.Close()
-			return nil
-		}
-	}
-	return nil
 }
 
 type simpleError string
