@@ -137,15 +137,30 @@ type MarketResolvedEvent struct {
 }
 
 func DecodeEvents(raw []byte) ([]Event, error) {
+	batch, err := splitMessageBatch(raw)
+	if err != nil {
+		return nil, decodeError("market.decode", raw, err)
+	}
+	return decodeEventBatch(batch)
+}
+
+func splitMessageBatch(raw []byte) ([]json.RawMessage, error) {
+	if isRawHeartbeat(raw) {
+		return nil, nil
+	}
+
 	var batch []json.RawMessage
 	if err := json.Unmarshal(raw, &batch); err != nil {
 		var single json.RawMessage
 		if err2 := json.Unmarshal(raw, &single); err2 != nil {
-			return nil, decodeError("market.decode", raw, err2)
+			return nil, err2
 		}
 		batch = []json.RawMessage{single}
 	}
+	return batch, nil
+}
 
+func decodeEventBatch(batch []json.RawMessage) ([]Event, error) {
 	events := make([]Event, 0, len(batch))
 	for _, item := range batch {
 		var meta eventMeta
@@ -207,6 +222,10 @@ func DecodeEvents(raw []byte) ([]Event, error) {
 		}
 	}
 	return events, nil
+}
+
+func isRawHeartbeat(raw []byte) bool {
+	return bytes.Equal(bytes.TrimSpace(raw), []byte("PONG"))
 }
 
 type eventMeta struct {
@@ -399,11 +418,19 @@ func decodeEventOp(kind string) string {
 }
 
 func inferMessageType(raw []byte) (string, error) {
-	events, err := DecodeEvents(raw)
+	batch, err := splitMessageBatch(raw)
+	if err != nil {
+		return "", decodeError("market.decode", raw, err)
+	}
+	if len(batch) == 0 {
+		return "", nil
+	}
+
+	events, err := decodeEventBatch(batch)
 	if err != nil {
 		return "", err
 	}
-	if len(events) == 0 {
+	if len(events) == 0 || len(events) != len(batch) {
 		return "", nil
 	}
 	kind := eventKind(events[0])
