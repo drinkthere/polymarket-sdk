@@ -13,8 +13,11 @@ import (
 )
 
 const (
-	listOp           = "positions.list"
-	defaultPageLimit = 500
+	listOp               = "positions.list"
+	listAllOp            = "positions.list_all"
+	defaultPageLimit     = 500
+	defaultSizeThreshold = "0"
+	maxPageOffset        = 10000
 )
 
 type Client struct {
@@ -77,6 +80,16 @@ func (c *Client) ListAll(ctx context.Context, req ListRequest) (ListResponse, er
 	if pageReq.Offset < 0 {
 		pageReq.Offset = 0
 	}
+	if strings.TrimSpace(pageReq.SizeThreshold) == "" {
+		pageReq.SizeThreshold = defaultSizeThreshold
+	}
+	if pageReq.Offset > maxPageOffset {
+		return ListResponse{}, &polyerrors.Error{
+			Kind:    polyerrors.ErrRequestBuild,
+			Op:      listAllOp,
+			Message: "offset must be <= 10000",
+		}
+	}
 
 	var all []Position
 	for {
@@ -89,7 +102,16 @@ func (c *Client) ListAll(ctx context.Context, req ListRequest) (ListResponse, er
 		if len(resp.Positions) < pageReq.Limit {
 			break
 		}
-		pageReq.Offset += len(resp.Positions)
+
+		nextOffset := pageReq.Offset + len(resp.Positions)
+		if nextOffset > maxPageOffset {
+			return ListResponse{}, &polyerrors.Error{
+				Kind:    polyerrors.ErrRequestBuild,
+				Op:      listAllOp,
+				Message: "offset must be <= 10000",
+			}
+		}
+		pageReq.Offset = nextOffset
 	}
 
 	return ListResponse{Positions: all}, nil
