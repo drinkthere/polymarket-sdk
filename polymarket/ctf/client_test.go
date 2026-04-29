@@ -29,10 +29,28 @@ const testMergeABIJSON = `[
   {"inputs":[{"name":"collateralToken","type":"address"},{"name":"parentCollectionId","type":"bytes32"},{"name":"conditionId","type":"bytes32"},{"name":"indexSets","type":"uint256[]"},{"name":"amount","type":"uint256"}],"name":"mergePositions","outputs":[],"stateMutability":"nonpayable","type":"function"}
 ]`
 
-func TestNewClientRequiresCaller(t *testing.T) {
+func TestNewClientRequiresRPCURL(t *testing.T) {
+	_, err := NewClient(Config{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var typed *polyerrors.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected typed error, got %T", err)
+	}
+	if typed.Kind != polyerrors.ErrRequestBuild {
+		t.Fatalf("expected ErrRequestBuild, got %v", typed.Kind)
+	}
+	if typed.Op != "ctf.new" {
+		t.Fatalf("unexpected op: %q", typed.Op)
+	}
+}
+
+func TestNewClientWithCallerRequiresCaller(t *testing.T) {
 	var caller ContractCaller
 
-	_, err := NewClient(caller)
+	_, err := NewClientWithCaller(caller)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -81,9 +99,9 @@ func TestIsResolvedReturnsTrueWhenPayoutDenominatorPositive(t *testing.T) {
 		},
 	}
 
-	client, err := NewClient(caller)
+	client, err := NewClientWithCaller(caller)
 	if err != nil {
-		t.Fatalf("NewClient() error = %v", err)
+		t.Fatalf("NewClientWithCaller() error = %v", err)
 	}
 
 	resolved, err := client.IsResolved(t.Context(), expectedCondition)
@@ -106,9 +124,9 @@ func TestIsResolvedReturnsFalseWhenPayoutDenominatorZero(t *testing.T) {
 		},
 	}
 
-	client, err := NewClient(caller)
+	client, err := NewClientWithCaller(caller)
 	if err != nil {
-		t.Fatalf("NewClient() error = %v", err)
+		t.Fatalf("NewClientWithCaller() error = %v", err)
 	}
 
 	resolved, err := client.IsResolved(t.Context(), "1234")
@@ -120,15 +138,15 @@ func TestIsResolvedReturnsFalseWhenPayoutDenominatorZero(t *testing.T) {
 	}
 }
 
-func TestRedeemPositionsBuildsCallDataAndTarget(t *testing.T) {
-	target, data, err := RedeemPositions(RedeemPositionsRequest{
-		CollateralToken:    USDCTokenAddress,
+func TestBuildRedeemPositionsCalldataBuildsCallDataAndTarget(t *testing.T) {
+	target, data, err := BuildRedeemPositionsCalldata(RedeemPositionsRequest{
+		CollateralToken:    USDCAddress,
 		ParentCollectionID: common.Hash{},
 		ConditionID:        "0x1234",
 		IndexSets:          []uint64{1, 2},
 	})
 	if err != nil {
-		t.Fatalf("RedeemPositions() error = %v", err)
+		t.Fatalf("BuildRedeemPositionsCalldata() error = %v", err)
 	}
 	if target != CTFContractAddress {
 		t.Fatalf("target = %s", target.Hex())
@@ -143,7 +161,7 @@ func TestRedeemPositionsBuildsCallDataAndTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unpack inputs: %v", err)
 	}
-	if got := args[0].(common.Address); got != USDCTokenAddress {
+	if got := args[0].(common.Address); got != USDCAddress {
 		t.Fatalf("collateral = %s", got.Hex())
 	}
 	if got := args[1].([32]byte); got != (common.Hash{}) {
@@ -155,8 +173,8 @@ func TestRedeemPositionsBuildsCallDataAndTarget(t *testing.T) {
 	assertBigIntSlice(t, args[3].([]*big.Int), []uint64{1, 2})
 }
 
-func TestNegRiskRedeemBuildsCallDataAndTarget(t *testing.T) {
-	target, data, err := NegRiskRedeem(NegRiskRedeemRequest{
+func TestBuildNegRiskRedeemCalldataBuildsCallDataAndTarget(t *testing.T) {
+	target, data, err := BuildNegRiskRedeemCalldata(NegRiskRedeemRequest{
 		ConditionID: "0xabcdef",
 		Amounts: []*big.Int{
 			big.NewInt(100),
@@ -164,7 +182,7 @@ func TestNegRiskRedeemBuildsCallDataAndTarget(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("NegRiskRedeem() error = %v", err)
+		t.Fatalf("BuildNegRiskRedeemCalldata() error = %v", err)
 	}
 	if target != NegRiskAdapterAddress {
 		t.Fatalf("target = %s", target.Hex())
@@ -187,16 +205,16 @@ func TestNegRiskRedeemBuildsCallDataAndTarget(t *testing.T) {
 	}
 }
 
-func TestMergePositionsBuildsCallDataAndTarget(t *testing.T) {
-	target, data, err := MergePositions(MergePositionsRequest{
-		CollateralToken:    USDCTokenAddress,
+func TestBuildMergePositionsCalldataBuildsCallDataAndTarget(t *testing.T) {
+	target, data, err := BuildMergePositionsCalldata(MergePositionsRequest{
+		CollateralToken:    USDCAddress,
 		ParentCollectionID: common.Hash{},
 		ConditionID:        "1234",
 		IndexSets:          []uint64{1, 2},
 		Amount:             big.NewInt(5_000_000),
 	})
 	if err != nil {
-		t.Fatalf("MergePositions() error = %v", err)
+		t.Fatalf("BuildMergePositionsCalldata() error = %v", err)
 	}
 	if target != CTFContractAddress {
 		t.Fatalf("target = %s", target.Hex())
@@ -211,7 +229,7 @@ func TestMergePositionsBuildsCallDataAndTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unpack inputs: %v", err)
 	}
-	if got := args[0].(common.Address); got != USDCTokenAddress {
+	if got := args[0].(common.Address); got != USDCAddress {
 		t.Fatalf("collateral = %s", got.Hex())
 	}
 	if got := args[1].([32]byte); got != (common.Hash{}) {
