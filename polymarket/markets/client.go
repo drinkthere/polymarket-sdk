@@ -31,6 +31,24 @@ type GetEventsBySlugResponse struct {
 	Events []Event
 }
 
+type OrderBookResponse struct {
+	Market         string      `json:"market"`
+	AssetID        string      `json:"asset_id"`
+	Timestamp      string      `json:"timestamp"`
+	Bids           []BookLevel `json:"bids"`
+	Asks           []BookLevel `json:"asks"`
+	MinOrderSize   string      `json:"min_order_size"`
+	NegRisk        bool        `json:"neg_risk"`
+	TickSize       string      `json:"tick_size"`
+	LastTradePrice string      `json:"last_trade_price"`
+	Hash           string      `json:"hash"`
+}
+
+type BookLevel struct {
+	Price float64 `json:"-"`
+	Size  float64 `json:"-"`
+}
+
 type GetClobMarketInfoResponse struct {
 	ConditionID string          `json:"condition_id"`
 	GST         *string         `json:"gst"`
@@ -59,14 +77,19 @@ type FeeDetails struct {
 }
 
 type Event struct {
-	ID           string   `json:"id"`
-	Slug         string   `json:"slug"`
-	Title        string   `json:"title"`
-	StartTime    string   `json:"startTime"`
-	StartDate    string   `json:"startDate"`
-	CreationDate string   `json:"creationDate"`
-	EndDate      string   `json:"endDate"`
-	Markets      []Market `json:"markets"`
+	ID            string        `json:"id"`
+	Slug          string        `json:"slug"`
+	Title         string        `json:"title"`
+	StartTime     string        `json:"startTime"`
+	StartDate     string        `json:"startDate"`
+	CreationDate  string        `json:"creationDate"`
+	EndDate       string        `json:"endDate"`
+	EventMetadata EventMetadata `json:"eventMetadata"`
+	Markets       []Market      `json:"markets"`
+}
+
+type EventMetadata struct {
+	PriceToBeat float64 `json:"priceToBeat"`
 }
 
 type Market struct {
@@ -91,11 +114,54 @@ type Market struct {
 	BestBid                  float64         `json:"bestBid"`
 	BestAsk                  float64         `json:"bestAsk"`
 	Spread                   float64         `json:"spread"`
+	Volume24hr               float64         `json:"-"`
+	NegRisk                  bool            `json:"-"`
 }
 
 type EventRef struct {
 	ID   string `json:"id"`
 	Slug string `json:"slug"`
+}
+
+func (m *Market) UnmarshalJSON(data []byte) error {
+	type marketAlias Market
+	aux := struct {
+		*marketAlias
+		Volume24hr json.RawMessage `json:"volume24hr"`
+		VolumeNum  json.RawMessage `json:"volumeNum"`
+		Volume     json.RawMessage `json:"volume"`
+		NegRisk    bool            `json:"negRisk"`
+	}{
+		marketAlias: (*marketAlias)(m),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	m.Volume24hr = firstNonZeroFloat(aux.Volume24hr, aux.VolumeNum, aux.Volume)
+	m.NegRisk = aux.NegRisk
+	return nil
+}
+
+func (l *BookLevel) UnmarshalJSON(data []byte) error {
+	var aux struct {
+		Price json.RawMessage `json:"price"`
+		Size  json.RawMessage `json:"size"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	var ok bool
+	l.Price, ok = parseJSONFloat(aux.Price)
+	if !ok {
+		return requestBuildError("book.decode_level", "price is required")
+	}
+	l.Size, ok = parseJSONFloat(aux.Size)
+	if !ok {
+		return requestBuildError("book.decode_level", "size is required")
+	}
+	return nil
 }
 
 func NewClient(httpClient *httpx.Client) (*Client, error) {
@@ -143,6 +209,22 @@ func (c *Client) GetEventsBySlug(ctx context.Context, slug string) (GetEventsByS
 		}
 	}
 	return GetEventsBySlugResponse{Events: events}, nil
+}
+
+func (c *Client) GetOrderBook(ctx context.Context, tokenID string) (OrderBookResponse, error) {
+	tokenID = strings.TrimSpace(tokenID)
+	if tokenID == "" {
+		return OrderBookResponse{}, requestBuildError("book.get", "tokenID is required")
+	}
+
+	query := url.Values{}
+	query.Set("token_id", tokenID)
+
+	var book OrderBookResponse
+	if err := c.do(ctx, "book.get", "/book", query, &book); err != nil {
+		return OrderBookResponse{}, err
+	}
+	return book, nil
 }
 
 func (c *Client) GetClobMarketInfo(ctx context.Context, conditionID string) (GetClobMarketInfoResponse, error) {
@@ -258,4 +340,39 @@ func requestBuildError(op string, message string) error {
 		Op:      op,
 		Message: message,
 	}
+}
+
+func firstNonZeroFloat(values ...json.RawMessage) float64 {
+	for _, raw := range values {
+		value, ok := parseJSONFloat(raw)
+		if ok && value != 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func parseJSONFloat(raw json.RawMessage) (float64, bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0, false
+	}
+
+	var num float64
+	if err := json.Unmarshal(raw, &num); err == nil {
+		return num, true
+	}
+
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return 0, false
+		}
+		num, err = strconv.ParseFloat(text, 64)
+		if err == nil {
+			return num, true
+		}
+	}
+
+	return 0, false
 }

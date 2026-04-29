@@ -72,7 +72,7 @@ func TestClientGetEventsBySlugBuildsRequestAndDecodesResponse(t *testing.T) {
 			t.Fatalf("unexpected slug query: %s", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `[{"id":"evt-1","slug":"btc-updown-5m-1776171600","title":"BTC Up or Down","startTime":"2026-04-14T13:00:00Z","creationDate":"2026-04-14T12:59:00Z","endDate":"2026-04-14T13:05:00Z","markets":[{"id":"pm-1","conditionId":"cond-1","slug":"btc-updown-5m-1776171600","question":"BTC?","outcomes":"[\"Yes\",\"No\"]","clobTokenIds":"[\"tok-yes\",\"tok-no\"]","eventStartTime":"2026-04-14T13:00:00Z","endDate":"2026-04-14T13:05:00Z","createdAt":"2026-04-14T12:59:00Z"}]}]`)
+		_, _ = io.WriteString(w, `[{"id":"evt-1","slug":"btc-updown-5m-1776171600","title":"BTC Up or Down","startTime":"2026-04-14T13:00:00Z","creationDate":"2026-04-14T12:59:00Z","endDate":"2026-04-14T13:05:00Z","eventMetadata":{"priceToBeat":84250.5},"markets":[{"id":"pm-1","conditionId":"cond-1","slug":"btc-updown-5m-1776171600","question":"BTC?","outcomes":"[\"Yes\",\"No\"]","clobTokenIds":"[\"tok-yes\",\"tok-no\"]","eventStartTime":"2026-04-14T13:00:00Z","endDate":"2026-04-14T13:05:00Z","createdAt":"2026-04-14T12:59:00Z","negRisk":true,"volumeNum":"321.5"}]}]`)
 	}))
 	defer server.Close()
 
@@ -97,6 +97,73 @@ func TestClientGetEventsBySlugBuildsRequestAndDecodesResponse(t *testing.T) {
 	}
 	if resp.Events[0].Markets[0].ConditionID != "cond-1" {
 		t.Fatalf("unexpected nested market: %+v", resp.Events[0].Markets[0])
+	}
+	if resp.Events[0].EventMetadata.PriceToBeat != 84250.5 {
+		t.Fatalf("unexpected priceToBeat: %+v", resp.Events[0].EventMetadata)
+	}
+	if !resp.Events[0].Markets[0].NegRisk || resp.Events[0].Markets[0].Volume24hr != 321.5 {
+		t.Fatalf("unexpected discovery fields: %+v", resp.Events[0].Markets[0])
+	}
+}
+
+func TestClientGetOrderBookBuildsRequestAndDecodesResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+		if r.URL.Path != "/book" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("token_id"); got != "tok-yes" {
+			t.Fatalf("unexpected token query: %s", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"market":"cond-1","asset_id":"tok-yes","timestamp":"2026-04-14T13:00:00Z","bids":[{"price":"0.48","size":"30"}],"asks":[{"price":"0.52","size":"25"}],"min_order_size":"5","neg_risk":true,"tick_size":"0.01","last_trade_price":"0.50","hash":"abc"}`)
+	}))
+	defer server.Close()
+
+	httpClient, err := httpx.New(httpx.ClientConfig{BaseURL: server.URL, Timeout: time.Second})
+	if err != nil {
+		t.Fatalf("httpx.New() error: %v", err)
+	}
+
+	client, err := NewClient(httpClient)
+	if err != nil {
+		t.Fatalf("NewClient() error: %v", err)
+	}
+	resp, err := client.GetOrderBook(context.Background(), "tok-yes")
+	if err != nil {
+		t.Fatalf("GetOrderBook() error: %v", err)
+	}
+	if resp.AssetID != "tok-yes" || len(resp.Bids) != 1 || len(resp.Asks) != 1 {
+		t.Fatalf("unexpected book: %+v", resp)
+	}
+	if resp.Bids[0].Price != 0.48 || resp.Asks[0].Price != 0.52 || !resp.NegRisk {
+		t.Fatalf("unexpected decoded book levels: %+v", resp)
+	}
+}
+
+func TestClientGetOrderBookRequiresTokenID(t *testing.T) {
+	httpClient, err := httpx.New(httpx.ClientConfig{BaseURL: "https://clob.polymarket.com", Timeout: time.Second})
+	if err != nil {
+		t.Fatalf("httpx.New() error: %v", err)
+	}
+
+	client, err := NewClient(httpClient)
+	if err != nil {
+		t.Fatalf("NewClient() error: %v", err)
+	}
+
+	_, err = client.GetOrderBook(context.Background(), "")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var typed *polyerrors.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected *errors.Error, got %T", err)
+	}
+	if typed.Kind != polyerrors.ErrRequestBuild {
+		t.Fatalf("expected ErrRequestBuild, got %v", typed.Kind)
 	}
 }
 
