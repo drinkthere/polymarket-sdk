@@ -1,6 +1,7 @@
 package market
 
 import (
+	"strings"
 	"testing"
 
 	polyerrors "github.com/drinkthere/polymarket-sdk/polymarket/errors"
@@ -448,6 +449,69 @@ func TestDecodeEventsReturnsTypedDecodeError(t *testing.T) {
 	}
 	if typed.Op != "market.decode_book" {
 		t.Fatalf("expected decode_book op, got %q", typed.Op)
+	}
+	if len(typed.RawBody) == 0 {
+		t.Fatal("expected raw body on typed decode error")
+	}
+}
+
+func TestDecodeEventsKnownAndUnknownMixedBatchReturnsTypedDecodeError(t *testing.T) {
+	t.Parallel()
+
+	_, err := DecodeEvents([]byte(`[
+		{
+			"event_type":"book",
+			"asset_id":"token-yes",
+			"bids":[{"price":"0.48","size":"30"}],
+			"asks":[{"price":"0.52","size":"25"}],
+			"timestamp":"1700000000000"
+		},
+		{
+			"event_type":"mystery_event",
+			"asset_id":"token-no",
+			"timestamp":"1700000000100"
+		}
+	]`))
+	if err == nil {
+		t.Fatal("DecodeEvents() error = nil, want typed decode error for mixed known+unknown batch")
+	}
+
+	typed, ok := err.(*polyerrors.Error)
+	if !ok {
+		t.Fatalf("DecodeEvents() error type = %T, want *errors.Error", err)
+	}
+	if typed.Kind != polyerrors.ErrDecode {
+		t.Fatalf("expected ErrDecode, got %v", typed.Kind)
+	}
+	if typed.Op != "market.decode" {
+		t.Fatalf("expected market.decode op, got %q", typed.Op)
+	}
+	if !strings.Contains(string(typed.RawBody), `"event_type":"mystery_event"`) {
+		t.Fatalf("expected raw body for unknown item, got %q", string(typed.RawBody))
+	}
+}
+
+func TestDecodeEventsExplicitUnknownEventTypeReturnsTypedDecodeError(t *testing.T) {
+	t.Parallel()
+
+	_, err := DecodeEvents([]byte(`{
+		"event_type":"mystery_event",
+		"asset_id":"token-no",
+		"timestamp":"1700000000100"
+	}`))
+	if err == nil {
+		t.Fatal("DecodeEvents() error = nil, want typed decode error for unknown event_type")
+	}
+
+	typed, ok := err.(*polyerrors.Error)
+	if !ok {
+		t.Fatalf("DecodeEvents() error type = %T, want *errors.Error", err)
+	}
+	if typed.Kind != polyerrors.ErrDecode {
+		t.Fatalf("expected ErrDecode, got %v", typed.Kind)
+	}
+	if typed.Op != "market.decode" {
+		t.Fatalf("expected market.decode op, got %q", typed.Op)
 	}
 	if len(typed.RawBody) == 0 {
 		t.Fatal("expected raw body on typed decode error")
