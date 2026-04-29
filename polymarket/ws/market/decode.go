@@ -14,6 +14,9 @@ type Event struct {
 	PriceChange    *PriceChangeEvent
 	BestBidAsk     *BestBidAskEvent
 	LastTradePrice *LastTradePriceEvent
+	TickSizeChange *TickSizeChangeEvent
+	NewMarket      *NewMarketEvent
+	MarketResolved *MarketResolvedEvent
 }
 
 type BookEvent struct {
@@ -59,11 +62,78 @@ type BestBidAskEvent struct {
 }
 
 type LastTradePriceEvent struct {
-	EventType string `json:"event_type"`
-	Market    string `json:"market"`
-	AssetID   string `json:"asset_id"`
-	Price     string `json:"price"`
-	Timestamp string `json:"timestamp"`
+	EventType  string `json:"event_type"`
+	Market     string `json:"market"`
+	AssetID    string `json:"asset_id"`
+	Price      string `json:"price"`
+	Side       string `json:"side"`
+	Size       string `json:"size"`
+	FeeRateBps string `json:"fee_rate_bps"`
+	Timestamp  string `json:"timestamp"`
+}
+
+type TickSizeChangeEvent struct {
+	EventType   string `json:"event_type"`
+	Market      string `json:"market"`
+	AssetID     string `json:"asset_id"`
+	OldTickSize string `json:"old_tick_size"`
+	NewTickSize string `json:"new_tick_size"`
+	Timestamp   string `json:"timestamp"`
+}
+
+type MarketEventMessage struct {
+	ID          string `json:"id"`
+	Ticker      string `json:"ticker"`
+	Slug        string `json:"slug"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+}
+
+type MarketFeeSchedule struct {
+	Exponent   string `json:"exponent"`
+	Rate       string `json:"rate"`
+	TakerOnly  bool   `json:"taker_only"`
+	RebateRate string `json:"rebate_rate"`
+}
+
+type NewMarketEvent struct {
+	EventType             string             `json:"event_type"`
+	ID                    string             `json:"id"`
+	Question              string             `json:"question"`
+	Market                string             `json:"market"`
+	Slug                  string             `json:"slug"`
+	Description           string             `json:"description"`
+	AssetsIDs             []string           `json:"assets_ids"`
+	Outcomes              []string           `json:"outcomes"`
+	EventMessage          MarketEventMessage `json:"event_message"`
+	Timestamp             string             `json:"timestamp"`
+	Tags                  []string           `json:"tags"`
+	ConditionID           string             `json:"condition_id"`
+	Active                bool               `json:"active"`
+	ClobTokenIDs          []string           `json:"clob_token_ids"`
+	SportsMarketType      string             `json:"sports_market_type"`
+	Line                  string             `json:"line"`
+	GameStartTime         string             `json:"game_start_time"`
+	OrderPriceMinTickSize string             `json:"order_price_min_tick_size"`
+	GroupItemTitle        string             `json:"group_item_title"`
+	TakerBaseFee          string             `json:"taker_base_fee"`
+	FeesEnabled           bool               `json:"fees_enabled"`
+	FeeSchedule           MarketFeeSchedule  `json:"fee_schedule"`
+}
+
+type MarketResolvedEvent struct {
+	EventType      string             `json:"event_type"`
+	ID             string             `json:"id"`
+	Question       string             `json:"question"`
+	Market         string             `json:"market"`
+	Slug           string             `json:"slug"`
+	Description    string             `json:"description"`
+	AssetsIDs      []string           `json:"assets_ids"`
+	Outcomes       []string           `json:"outcomes"`
+	WinningAssetID string             `json:"winning_asset_id"`
+	WinningOutcome string             `json:"winning_outcome"`
+	EventMessage   MarketEventMessage `json:"event_message"`
+	Timestamp      string             `json:"timestamp"`
 }
 
 func DecodeEvents(raw []byte) ([]Event, error) {
@@ -116,6 +186,24 @@ func DecodeEvents(raw []byte) ([]Event, error) {
 				return nil, decodeError("market.decode_last_trade_price", item, err)
 			}
 			events = append(events, Event{LastTradePrice: &event})
+		case "tick_size_change":
+			event, err := decodeTickSizeChangeEvent(item)
+			if err != nil {
+				return nil, decodeError("market.decode_tick_size_change", item, err)
+			}
+			events = append(events, Event{TickSizeChange: &event})
+		case "new_market":
+			event, err := decodeNewMarketEvent(item)
+			if err != nil {
+				return nil, decodeError("market.decode_new_market", item, err)
+			}
+			events = append(events, Event{NewMarket: &event})
+		case "market_resolved":
+			event, err := decodeMarketResolvedEvent(item)
+			if err != nil {
+				return nil, decodeError("market.decode_market_resolved", item, err)
+			}
+			events = append(events, Event{MarketResolved: &event})
 		}
 	}
 	return events, nil
@@ -299,6 +387,12 @@ func decodeEventOp(kind string) string {
 		return "market.decode_best_bid_ask"
 	case "last_trade_price":
 		return "market.decode_last_trade_price"
+	case "tick_size_change":
+		return "market.decode_tick_size_change"
+	case "new_market":
+		return "market.decode_new_market"
+	case "market_resolved":
+		return "market.decode_market_resolved"
 	default:
 		return "market.decode"
 	}
@@ -334,6 +428,12 @@ func eventKind(event Event) string {
 		return "best_bid_ask"
 	case event.LastTradePrice != nil:
 		return "last_trade_price"
+	case event.TickSizeChange != nil:
+		return "tick_size_change"
+	case event.NewMarket != nil:
+		return "new_market"
+	case event.MarketResolved != nil:
+		return "market_resolved"
 	default:
 		return ""
 	}
@@ -429,10 +529,13 @@ func decodeBestBidAskEvent(raw []byte) (BestBidAskEvent, error) {
 func decodeLastTradePriceEvent(raw []byte) (LastTradePriceEvent, error) {
 	var payload struct {
 		eventMeta
-		Market    string          `json:"market"`
-		AssetID   string          `json:"asset_id"`
-		Price     string          `json:"price"`
-		Timestamp json.RawMessage `json:"timestamp"`
+		Market     string          `json:"market"`
+		AssetID    string          `json:"asset_id"`
+		Price      string          `json:"price"`
+		Side       string          `json:"side"`
+		Size       string          `json:"size"`
+		FeeRateBps string          `json:"fee_rate_bps"`
+		Timestamp  json.RawMessage `json:"timestamp"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return LastTradePriceEvent{}, err
@@ -445,11 +548,145 @@ func decodeLastTradePriceEvent(raw []byte) (LastTradePriceEvent, error) {
 	}
 
 	return LastTradePriceEvent{
-		EventType: eventType,
-		Market:    payload.Market,
-		AssetID:   payload.AssetID,
-		Price:     payload.Price,
-		Timestamp: timestamp,
+		EventType:  eventType,
+		Market:     payload.Market,
+		AssetID:    payload.AssetID,
+		Price:      payload.Price,
+		Side:       payload.Side,
+		Size:       payload.Size,
+		FeeRateBps: payload.FeeRateBps,
+		Timestamp:  timestamp,
+	}, nil
+}
+
+func decodeTickSizeChangeEvent(raw []byte) (TickSizeChangeEvent, error) {
+	var payload struct {
+		eventMeta
+		Market      string          `json:"market"`
+		AssetID     string          `json:"asset_id"`
+		OldTickSize string          `json:"old_tick_size"`
+		NewTickSize string          `json:"new_tick_size"`
+		Timestamp   json.RawMessage `json:"timestamp"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return TickSizeChangeEvent{}, err
+	}
+
+	eventType := normalizedEventType(payload.kind(), "tick_size_change")
+	timestamp, err := decodeTimestamp(payload.Timestamp)
+	if err != nil {
+		return TickSizeChangeEvent{}, err
+	}
+
+	return TickSizeChangeEvent{
+		EventType:   eventType,
+		Market:      payload.Market,
+		AssetID:     payload.AssetID,
+		OldTickSize: payload.OldTickSize,
+		NewTickSize: payload.NewTickSize,
+		Timestamp:   timestamp,
+	}, nil
+}
+
+func decodeNewMarketEvent(raw []byte) (NewMarketEvent, error) {
+	var payload struct {
+		eventMeta
+		ID                    string             `json:"id"`
+		Question              string             `json:"question"`
+		Market                string             `json:"market"`
+		Slug                  string             `json:"slug"`
+		Description           string             `json:"description"`
+		AssetsIDs             []string           `json:"assets_ids"`
+		Outcomes              []string           `json:"outcomes"`
+		EventMessage          MarketEventMessage `json:"event_message"`
+		Timestamp             json.RawMessage    `json:"timestamp"`
+		Tags                  []string           `json:"tags"`
+		ConditionID           string             `json:"condition_id"`
+		Active                bool               `json:"active"`
+		ClobTokenIDs          []string           `json:"clob_token_ids"`
+		SportsMarketType      string             `json:"sports_market_type"`
+		Line                  string             `json:"line"`
+		GameStartTime         string             `json:"game_start_time"`
+		OrderPriceMinTickSize string             `json:"order_price_min_tick_size"`
+		GroupItemTitle        string             `json:"group_item_title"`
+		TakerBaseFee          string             `json:"taker_base_fee"`
+		FeesEnabled           bool               `json:"fees_enabled"`
+		FeeSchedule           MarketFeeSchedule  `json:"fee_schedule"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return NewMarketEvent{}, err
+	}
+
+	eventType := normalizedEventType(payload.kind(), "new_market")
+	timestamp, err := decodeTimestamp(payload.Timestamp)
+	if err != nil {
+		return NewMarketEvent{}, err
+	}
+
+	return NewMarketEvent{
+		EventType:             eventType,
+		ID:                    payload.ID,
+		Question:              payload.Question,
+		Market:                payload.Market,
+		Slug:                  payload.Slug,
+		Description:           payload.Description,
+		AssetsIDs:             payload.AssetsIDs,
+		Outcomes:              payload.Outcomes,
+		EventMessage:          payload.EventMessage,
+		Timestamp:             timestamp,
+		Tags:                  payload.Tags,
+		ConditionID:           payload.ConditionID,
+		Active:                payload.Active,
+		ClobTokenIDs:          payload.ClobTokenIDs,
+		SportsMarketType:      payload.SportsMarketType,
+		Line:                  payload.Line,
+		GameStartTime:         payload.GameStartTime,
+		OrderPriceMinTickSize: payload.OrderPriceMinTickSize,
+		GroupItemTitle:        payload.GroupItemTitle,
+		TakerBaseFee:          payload.TakerBaseFee,
+		FeesEnabled:           payload.FeesEnabled,
+		FeeSchedule:           payload.FeeSchedule,
+	}, nil
+}
+
+func decodeMarketResolvedEvent(raw []byte) (MarketResolvedEvent, error) {
+	var payload struct {
+		eventMeta
+		ID             string             `json:"id"`
+		Question       string             `json:"question"`
+		Market         string             `json:"market"`
+		Slug           string             `json:"slug"`
+		Description    string             `json:"description"`
+		AssetsIDs      []string           `json:"assets_ids"`
+		Outcomes       []string           `json:"outcomes"`
+		WinningAssetID string             `json:"winning_asset_id"`
+		WinningOutcome string             `json:"winning_outcome"`
+		EventMessage   MarketEventMessage `json:"event_message"`
+		Timestamp      json.RawMessage    `json:"timestamp"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return MarketResolvedEvent{}, err
+	}
+
+	eventType := normalizedEventType(payload.kind(), "market_resolved")
+	timestamp, err := decodeTimestamp(payload.Timestamp)
+	if err != nil {
+		return MarketResolvedEvent{}, err
+	}
+
+	return MarketResolvedEvent{
+		EventType:      eventType,
+		ID:             payload.ID,
+		Question:       payload.Question,
+		Market:         payload.Market,
+		Slug:           payload.Slug,
+		Description:    payload.Description,
+		AssetsIDs:      payload.AssetsIDs,
+		Outcomes:       payload.Outcomes,
+		WinningAssetID: payload.WinningAssetID,
+		WinningOutcome: payload.WinningOutcome,
+		EventMessage:   payload.EventMessage,
+		Timestamp:      timestamp,
 	}, nil
 }
 
