@@ -141,7 +141,7 @@ func DecodeEvents(raw []byte) ([]Event, error) {
 	if err != nil {
 		return nil, decodeError("market.decode", raw, err)
 	}
-	return decodeEventBatch(batch)
+	return decodeEventBatch(batch, true)
 }
 
 func splitMessageBatch(raw []byte) ([]json.RawMessage, error) {
@@ -160,7 +160,7 @@ func splitMessageBatch(raw []byte) ([]json.RawMessage, error) {
 	return batch, nil
 }
 
-func decodeEventBatch(batch []json.RawMessage) ([]Event, error) {
+func decodeEventBatch(batch []json.RawMessage, strictUnknown bool) ([]Event, error) {
 	events := make([]Event, 0, len(batch))
 	for _, item := range batch {
 		var meta eventMeta
@@ -219,6 +219,10 @@ func decodeEventBatch(batch []json.RawMessage) ([]Event, error) {
 				return nil, decodeError("market.decode_market_resolved", item, err)
 			}
 			events = append(events, Event{MarketResolved: &event})
+		default:
+			if strictUnknown && !meta.isFallback() {
+				return nil, decodeError("market.decode", item, fmt.Errorf("unsupported event_type %q", kind))
+			}
 		}
 	}
 	return events, nil
@@ -426,7 +430,7 @@ func inferMessageType(raw []byte) (string, error) {
 		return "", nil
 	}
 
-	events, err := decodeEventBatch(batch)
+	events, err := decodeEventBatch(batch, false)
 	if err != nil {
 		return "", err
 	}
