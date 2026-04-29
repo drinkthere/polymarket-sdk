@@ -74,6 +74,37 @@ func TestDoJSONReturnsTypedAPIError(t *testing.T) {
 	}
 }
 
+func TestNewWithHTTPClientUsesInjectedClient(t *testing.T) {
+	var seenUA string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenUA = r.Header.Get("User-Agent")
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer srv.Close()
+
+	rawClient := srv.Client()
+	client, err := NewWithHTTPClient(ClientConfig{BaseURL: srv.URL}, rawClient)
+	if err != nil {
+		t.Fatalf("NewWithHTTPClient() error = %v", err)
+	}
+
+	body, err := client.DoJSON(t.Context(), Request{
+		Op:     "httpx.injected_client",
+		Method: http.MethodGet,
+		Path:   "/",
+		Header: http.Header{"User-Agent": []string{"pm5-test"}},
+	})
+	if err != nil {
+		t.Fatalf("DoJSON() error = %v", err)
+	}
+	if string(body) != `{"ok":true}` {
+		t.Fatalf("DoJSON() body = %s", string(body))
+	}
+	if seenUA != "pm5-test" {
+		t.Fatalf("expected injected client request to reach server, got ua=%q", seenUA)
+	}
+}
+
 func TestNewInvalidBaseURLReturnsRequestBuildError(t *testing.T) {
 	_, err := New(ClientConfig{
 		BaseURL: "http://[::1",

@@ -44,24 +44,9 @@ const (
 )
 
 func New(cfg ClientConfig) (*Client, error) {
-	base := strings.TrimSpace(cfg.BaseURL)
-	if base == "" {
-		return nil, &polyerrors.Error{
-			Kind:    polyerrors.ErrRequestBuild,
-			Op:      "httpx.new",
-			Message: "base_url is required",
-		}
-	}
-	parsed, err := url.Parse(base)
+	parsed, maxResp, err := validateConfigWithOp(cfg, "httpx.new")
 	if err != nil {
-		return nil, &polyerrors.Error{Kind: polyerrors.ErrRequestBuild, Op: "httpx.new", Message: err.Error(), Cause: err}
-	}
-	if !parsed.IsAbs() || strings.TrimSpace(parsed.Host) == "" {
-		return nil, &polyerrors.Error{
-			Kind:    polyerrors.ErrRequestBuild,
-			Op:      "httpx.new",
-			Message: "base_url must be an absolute URL",
-		}
+		return nil, err
 	}
 	switch parsed.Scheme {
 	case "http", "https":
@@ -85,20 +70,6 @@ func New(cfg ClientConfig) (*Client, error) {
 		timeout = defaultTimeout
 	}
 
-	maxResp := cfg.MaxResponseBytes
-	if maxResp == 0 {
-		maxResp = defaultMaxResponseBytes
-	}
-	if maxResp < 0 {
-		return nil, &polyerrors.Error{
-			Kind:    polyerrors.ErrRequestBuild,
-			Op:      "httpx.new",
-			Message: "max_response_bytes must be >= 0",
-		}
-	}
-
-	parsed.Path = strings.TrimRight(parsed.Path, "/")
-
 	return &Client{
 		baseURL:          parsed,
 		maxResponseBytes: maxResp,
@@ -106,6 +77,68 @@ func New(cfg ClientConfig) (*Client, error) {
 			Timeout: timeout,
 		},
 	}, nil
+}
+
+func NewWithHTTPClient(cfg ClientConfig, raw *http.Client) (*Client, error) {
+	if raw == nil {
+		return nil, &polyerrors.Error{
+			Kind:    polyerrors.ErrRequestBuild,
+			Op:      "httpx.new_with_http_client",
+			Message: "http client is required",
+		}
+	}
+
+	base, maxResp, err := validateConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Client{
+		baseURL:          base,
+		httpClient:       raw,
+		maxResponseBytes: maxResp,
+	}, nil
+}
+
+func validateConfig(cfg ClientConfig) (*url.URL, int64, error) {
+	return validateConfigWithOp(cfg, "httpx.validate_config")
+}
+
+func validateConfigWithOp(cfg ClientConfig, op string) (*url.URL, int64, error) {
+	base := strings.TrimSpace(cfg.BaseURL)
+	if base == "" {
+		return nil, 0, &polyerrors.Error{
+			Kind:    polyerrors.ErrRequestBuild,
+			Op:      op,
+			Message: "base_url is required",
+		}
+	}
+	parsed, err := url.Parse(base)
+	if err != nil {
+		return nil, 0, &polyerrors.Error{Kind: polyerrors.ErrRequestBuild, Op: op, Message: err.Error(), Cause: err}
+	}
+	if !parsed.IsAbs() || strings.TrimSpace(parsed.Host) == "" {
+		return nil, 0, &polyerrors.Error{
+			Kind:    polyerrors.ErrRequestBuild,
+			Op:      op,
+			Message: "base_url must be an absolute URL",
+		}
+	}
+
+	maxResp := cfg.MaxResponseBytes
+	if maxResp == 0 {
+		maxResp = defaultMaxResponseBytes
+	}
+	if maxResp < 0 {
+		return nil, 0, &polyerrors.Error{
+			Kind:    polyerrors.ErrRequestBuild,
+			Op:      op,
+			Message: "max_response_bytes must be >= 0",
+		}
+	}
+
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	return parsed, maxResp, nil
 }
 
 func (c *Client) buildURL(p string, query url.Values) (string, error) {
