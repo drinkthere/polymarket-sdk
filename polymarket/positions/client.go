@@ -1,6 +1,7 @@
 package positions
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -133,19 +134,38 @@ func (c *Client) ListAll(ctx context.Context, req ListRequest) (ListResponse, er
 	}
 
 	var all []Position
+	skip := 0
 	for {
 		resp, err := c.List(ctx, pageReq)
 		if err != nil {
 			return ListResponse{}, err
 		}
 
-		all = append(all, resp.Positions...)
+		pagePositions := resp.Positions
+		if skip > 0 {
+			if skip >= len(pagePositions) {
+				pagePositions = nil
+			} else {
+				pagePositions = pagePositions[skip:]
+			}
+			skip = 0
+		}
+
+		all = append(all, pagePositions...)
 		if len(resp.Positions) < pageReq.Limit {
 			break
 		}
 
 		nextOffset := pageReq.Offset + len(resp.Positions)
 		if nextOffset > maxPageOffset {
+			if pageReq.Offset == maxPageOffset {
+				break
+			}
+			skip = nextOffset - maxPageOffset
+			pageReq.Offset = maxPageOffset
+			continue
+		}
+		if nextOffset == pageReq.Offset {
 			break
 		}
 		pageReq.Offset = nextOffset
@@ -163,6 +183,9 @@ func (c *Client) do(ctx context.Context, op string, path string, query url.Value
 	})
 	if err != nil {
 		return err
+	}
+	if bytes.Equal(bytes.TrimSpace(payload), []byte("null")) {
+		return protocolError(op, "response body must not be null")
 	}
 	if err := json.Unmarshal(payload, out); err != nil {
 		return &polyerrors.Error{
