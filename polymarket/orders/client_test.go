@@ -158,6 +158,54 @@ func TestGetOpenOrdersPaginatesAndSignsRequests(t *testing.T) {
 	}
 }
 
+func TestGetFeeRateUsesTokenIDQueryAndDecodesBaseFee(t *testing.T) {
+	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/fee-rate" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.URL.Query().Get("token_id"); got != "token-1" {
+			t.Fatalf("token_id = %q", got)
+		}
+		_, _ = io.WriteString(w, `{"base_fee":30}`)
+	}))
+
+	client, err := NewClient(httpClient, validAuthConfig())
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	got, err := client.GetFeeRate(t.Context(), GetFeeRateRequest{TokenID: " token-1 "})
+	if err != nil {
+		t.Fatalf("GetFeeRate() error = %v", err)
+	}
+	if got.BaseFee != 30 {
+		t.Fatalf("GetFeeRate().BaseFee = %d, want 30", got.BaseFee)
+	}
+}
+
+func TestGetFeeRateRejectsEmptyTokenID(t *testing.T) {
+	client, err := NewClient(newTestHTTPClient(t), validAuthConfig())
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	_, err = client.GetFeeRate(t.Context(), GetFeeRateRequest{TokenID: "   "})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var typed *polyerrors.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected typed error, got %T", err)
+	}
+	if typed.Kind != polyerrors.ErrRequestBuild {
+		t.Fatalf("expected ErrRequestBuild, got %v", typed.Kind)
+	}
+	if typed.Op != "orders.get_fee_rate" {
+		t.Fatalf("unexpected op: %q", typed.Op)
+	}
+}
+
 func TestGetUserTradesPaginatesWithFiltersAndDecodesFullPayload(t *testing.T) {
 	var calls int
 

@@ -111,6 +111,32 @@ func (c *Client) GetOpenOrders(ctx context.Context, req GetOpenOrdersRequest) ([
 	}
 }
 
+func (c *Client) GetFeeRate(ctx context.Context, req GetFeeRateRequest) (GetFeeRateResponse, error) {
+	tokenID := strings.TrimSpace(req.TokenID)
+	if tokenID == "" {
+		return GetFeeRateResponse{}, &polyerrors.Error{Kind: polyerrors.ErrRequestBuild, Op: "orders.get_fee_rate", Message: "tokenID is required"}
+	}
+
+	query := url.Values{}
+	query.Set("token_id", tokenID)
+
+	body, err := c.transport.DoJSON(ctx, polyauth.TransportRequest{
+		Op:     "orders.get_fee_rate",
+		Method: http.MethodGet,
+		Path:   "/fee-rate",
+		Query:  query,
+	})
+	if err != nil {
+		return GetFeeRateResponse{}, err
+	}
+
+	var resp GetFeeRateResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return GetFeeRateResponse{}, decodeError("orders.get_fee_rate", body, err)
+	}
+	return resp, nil
+}
+
 func (c *Client) GetUserTrades(ctx context.Context, req GetUserTradesRequest) ([]UserTrade, error) {
 	creds, err := c.credentials(ctx, req.Credentials)
 	if err != nil {

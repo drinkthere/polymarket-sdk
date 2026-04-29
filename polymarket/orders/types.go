@@ -27,6 +27,14 @@ type GetOpenOrdersRequest struct {
 	AssetID     string
 }
 
+type GetFeeRateRequest struct {
+	TokenID string
+}
+
+type GetFeeRateResponse struct {
+	BaseFee int `json:"base_fee"`
+}
+
 type OpenOrder struct {
 	ID              string   `json:"id"`
 	Status          string   `json:"status"`
