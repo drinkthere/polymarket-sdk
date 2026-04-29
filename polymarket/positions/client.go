@@ -24,6 +24,18 @@ type Client struct {
 	httpClient *httpx.Client
 }
 
+type positionPayload struct {
+	Asset        *string  `json:"asset"`
+	ConditionID  *string  `json:"conditionId"`
+	Size         *float64 `json:"size"`
+	AvgPrice     *float64 `json:"avgPrice"`
+	Title        *string  `json:"title"`
+	Outcome      *string  `json:"outcome"`
+	Side         *string  `json:"side"`
+	NegativeRisk *bool    `json:"negativeRisk"`
+	OutcomeIndex *int     `json:"outcomeIndex"`
+}
+
 func NewClient(httpClient *httpx.Client) (*Client, error) {
 	if httpClient == nil {
 		return nil, &polyerrors.Error{
@@ -77,11 +89,13 @@ func (c *Client) List(ctx context.Context, req ListRequest) (ListResponse, error
 		query.Set("sizeThreshold", sizeThreshold)
 	}
 
-	var positions []Position
-	if err := c.do(ctx, listOp, "/positions", query, &positions); err != nil {
+	var payloads []positionPayload
+	if err := c.do(ctx, listOp, "/positions", query, &payloads); err != nil {
 		return ListResponse{}, err
 	}
-	if err := validatePositions(listOp, positions); err != nil {
+
+	positions, err := convertPositions(listOp, payloads)
+	if err != nil {
 		return ListResponse{}, err
 	}
 	return ListResponse{Positions: positions}, nil
@@ -132,7 +146,7 @@ func (c *Client) ListAll(ctx context.Context, req ListRequest) (ListResponse, er
 
 		nextOffset := pageReq.Offset + len(resp.Positions)
 		if nextOffset > maxPageOffset {
-			return ListResponse{}, requestBuildError(listAllOp, "offset must be <= 10000")
+			break
 		}
 		pageReq.Offset = nextOffset
 	}
@@ -231,19 +245,54 @@ func isNonNegativeNumericString(raw string) bool {
 	return err == nil
 }
 
-func validatePositions(op string, positions []Position) error {
-	for i, position := range positions {
-		if strings.TrimSpace(position.Asset) == "" {
-			return protocolError(op, "positions["+strconv.Itoa(i)+"].asset is required")
+func convertPositions(op string, payloads []positionPayload) ([]Position, error) {
+	positions := make([]Position, 0, len(payloads))
+	for i, payload := range payloads {
+		path := "positions[" + strconv.Itoa(i) + "]."
+
+		if payload.Asset == nil || strings.TrimSpace(*payload.Asset) == "" {
+			return nil, protocolError(op, path+"asset is required")
 		}
-		if strings.TrimSpace(position.ConditionID) == "" {
-			return protocolError(op, "positions["+strconv.Itoa(i)+"].conditionId is required")
+		if payload.ConditionID == nil || strings.TrimSpace(*payload.ConditionID) == "" {
+			return nil, protocolError(op, path+"conditionId is required")
 		}
-		if position.OutcomeIndex < 0 {
-			return protocolError(op, "positions["+strconv.Itoa(i)+"].outcomeIndex must be >= 0")
+		if payload.Size == nil {
+			return nil, protocolError(op, path+"size is required")
 		}
+		if payload.AvgPrice == nil {
+			return nil, protocolError(op, path+"avgPrice is required")
+		}
+		if payload.NegativeRisk == nil {
+			return nil, protocolError(op, path+"negativeRisk is required")
+		}
+		if payload.OutcomeIndex == nil {
+			return nil, protocolError(op, path+"outcomeIndex is required")
+		}
+		if *payload.OutcomeIndex < 0 {
+			return nil, protocolError(op, path+"outcomeIndex must be >= 0")
+		}
+
+		position := Position{
+			Asset:        strings.TrimSpace(*payload.Asset),
+			ConditionID:  strings.TrimSpace(*payload.ConditionID),
+			Size:         *payload.Size,
+			AvgPrice:     *payload.AvgPrice,
+			NegativeRisk: *payload.NegativeRisk,
+			OutcomeIndex: *payload.OutcomeIndex,
+		}
+		if payload.Title != nil {
+			position.Title = *payload.Title
+		}
+		if payload.Outcome != nil {
+			position.Outcome = *payload.Outcome
+		}
+		if payload.Side != nil {
+			position.Side = *payload.Side
+		}
+
+		positions = append(positions, position)
 	}
-	return nil
+	return positions, nil
 }
 
 func protocolError(op string, message string) error {
