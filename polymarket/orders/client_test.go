@@ -249,6 +249,15 @@ func TestGetUserTradesRawPaginatesWithFilters(t *testing.T) {
 		if got := r.Header.Get("POLY_API_KEY"); got != "key-1" {
 			t.Fatalf("POLY_API_KEY = %q", got)
 		}
+		if got := r.Header.Get("POLY_PASSPHRASE"); got != "pass-1" {
+			t.Fatalf("POLY_PASSPHRASE = %q", got)
+		}
+		if got := r.Header.Get("POLY_SIGNATURE"); got == "" {
+			t.Fatal("expected POLY_SIGNATURE header")
+		}
+		if got := r.Header.Get("POLY_TIMESTAMP"); got == "" {
+			t.Fatal("expected POLY_TIMESTAMP header")
+		}
 		for key, want := range map[string]string{
 			"id":            "trade-filter",
 			"maker_address": "0x1234567890123456789012345678901234567890",
@@ -288,7 +297,7 @@ func TestGetUserTradesRawPaginatesWithFilters(t *testing.T) {
 		ID:           "trade-filter",
 		MakerAddress: "0x1234567890123456789012345678901234567890",
 		Market:       "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		AssetID:      "asset-1",
+		AssetID:      " asset-1 ",
 		Before:       "200",
 		After:        "100",
 	})
@@ -303,6 +312,69 @@ func TestGetUserTradesRawPaginatesWithFilters(t *testing.T) {
 	}
 	if string(raw[1]) != `{"id":"tr-2","taker_order_id":"take-2"}` {
 		t.Fatalf("unexpected raw[1] = %s", string(raw[1]))
+	}
+}
+
+func TestGetUserTradesRawReturnsTypedAuthError(t *testing.T) {
+	client := newTestHTTPClient(t)
+
+	ordersClient, err := NewClient(client, validAuthConfig())
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	_, err = ordersClient.GetUserTradesRaw(t.Context(), GetUserTradesRawRequest{
+		Credentials: polyauth.APICredentials{
+			Key:        "key-1",
+			Secret:     "!!!",
+			Passphrase: "pass-1",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var typed *polyerrors.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected typed error, got %T", err)
+	}
+	if typed.Kind != polyerrors.ErrAuth {
+		t.Fatalf("expected ErrAuth, got %v", typed.Kind)
+	}
+	if typed.Op != "orders.get_user_trades_raw" {
+		t.Fatalf("unexpected op: %q", typed.Op)
+	}
+}
+
+func TestGetUserTradesRawReturnsTypedDecodeError(t *testing.T) {
+	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `not-json`)
+	}))
+
+	client, err := NewClient(httpClient, validAuthConfig())
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	_, err = client.GetUserTradesRaw(t.Context(), GetUserTradesRawRequest{
+		Credentials: validCreds(),
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var typed *polyerrors.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected typed error, got %T", err)
+	}
+	if typed.Kind != polyerrors.ErrDecode {
+		t.Fatalf("expected ErrDecode, got %v", typed.Kind)
+	}
+	if typed.Op != "orders.get_user_trades_raw" {
+		t.Fatalf("unexpected op: %q", typed.Op)
+	}
+	if string(typed.RawBody) != "not-json" {
+		t.Fatalf("unexpected raw body: %q", string(typed.RawBody))
 	}
 }
 

@@ -179,13 +179,78 @@ func TestUpdateAllowanceIncludesConditionalTokenID(t *testing.T) {
 		Credentials:   validCreds(),
 		SignatureType: 2,
 		AssetType:     AssetTypeConditional,
-		TokenID:       "123",
+		TokenID:       " 123 ",
 	})
 	if err != nil {
 		t.Fatalf("UpdateAllowance() error = %v", err)
 	}
 	if !resp.Updated {
 		t.Fatal("expected Updated=true")
+	}
+}
+
+func TestUpdateAllowanceReturnsTypedAuthError(t *testing.T) {
+	client := newTestHTTPClient(t)
+
+	balancesClient, err := NewClient(client, validAuthConfig())
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	_, err = balancesClient.UpdateAllowance(t.Context(), UpdateAllowanceRequest{
+		Credentials: polyauth.APICredentials{
+			Key:        "key-1",
+			Secret:     "!!!",
+			Passphrase: "pass-1",
+		},
+		SignatureType: 2,
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var typed *polyerrors.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected typed error, got %T", err)
+	}
+	if typed.Kind != polyerrors.ErrAuth {
+		t.Fatalf("expected ErrAuth, got %v", typed.Kind)
+	}
+	if typed.Op != "balances.update_allowance" {
+		t.Fatalf("unexpected op: %q", typed.Op)
+	}
+}
+
+func TestUpdateAllowanceReturnsTypedDecodeError(t *testing.T) {
+	client := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `not-json`)
+	}))
+
+	balancesClient, err := NewClient(client, validAuthConfig())
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	_, err = balancesClient.UpdateAllowance(t.Context(), UpdateAllowanceRequest{
+		Credentials:   validCreds(),
+		SignatureType: 2,
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var typed *polyerrors.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected typed error, got %T", err)
+	}
+	if typed.Kind != polyerrors.ErrDecode {
+		t.Fatalf("expected ErrDecode, got %v", typed.Kind)
+	}
+	if typed.Op != "balances.update_allowance" {
+		t.Fatalf("unexpected op: %q", typed.Op)
+	}
+	if string(typed.RawBody) != "not-json" {
+		t.Fatalf("unexpected raw body: %q", string(typed.RawBody))
 	}
 }
 

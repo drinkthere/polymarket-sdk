@@ -114,8 +114,8 @@ func (c *Client) UpdateAllowance(ctx context.Context, req UpdateAllowanceRequest
 	query := url.Values{}
 	query.Set("asset_type", assetType)
 	query.Set("signature_type", strconv.Itoa(req.SignatureType))
-	if strings.TrimSpace(req.TokenID) != "" {
-		query.Set("token_id", req.TokenID)
+	if tokenID := strings.TrimSpace(req.TokenID); tokenID != "" {
+		query.Set("token_id", tokenID)
 	}
 
 	headers, err := c.signer.CreateL2Headers(creds, polyauth.L2HeaderArgs{

@@ -360,10 +360,11 @@ func userTradesBaseQuery(id, makerAddress, market, assetID, before, after string
 }
 
 func setQueryIfPresent(query url.Values, key, value string) {
-	if strings.TrimSpace(value) == "" {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
 		return
 	}
-	query.Set(key, value)
+	query.Set(key, trimmed)
 }
 
 func cloneQuery(src url.Values) url.Values {
