@@ -333,7 +333,7 @@ func (c *Client) getUserTradesPage(ctx context.Context, creds polyauth.APICreden
 
 	headers, err := c.signer.CreateL2Headers(creds, polyauth.L2HeaderArgs{
 		Method:      http.MethodGet,
-		RequestPath: "/trades",
+		RequestPath: "/data/trades",
 	}, polyauth.Now())
 	if err != nil {
 		return nil, authError(op, err)
@@ -342,7 +342,7 @@ func (c *Client) getUserTradesPage(ctx context.Context, creds polyauth.APICreden
 	return c.transport.DoJSON(ctx, polyauth.TransportRequest{
 		Op:      op,
 		Method:  http.MethodGet,
-		Path:    "/trades",
+		Path:    "/data/trades",
 		Query:   query,
 		Headers: headers.HTTPHeader(),
 	})

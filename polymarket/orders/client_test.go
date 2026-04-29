@@ -161,7 +161,7 @@ func TestGetUserTradesPaginatesWithFiltersAndDecodesFullPayload(t *testing.T) {
 	var calls int
 
 	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/trades" {
+		if r.Method != http.MethodGet || r.URL.Path != "/data/trades" {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 		if got := r.Header.Get("POLY_API_KEY"); got != "key-1" {
@@ -243,7 +243,7 @@ func TestGetUserTradesRawPaginatesWithFilters(t *testing.T) {
 	var calls int
 
 	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/trades" {
+		if r.Method != http.MethodGet || r.URL.Path != "/data/trades" {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 		if got := r.Header.Get("POLY_API_KEY"); got != "key-1" {
