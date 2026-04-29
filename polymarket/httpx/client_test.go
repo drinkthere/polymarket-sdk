@@ -112,6 +112,20 @@ func TestNewWithHTTPClientUsesInjectedClient(t *testing.T) {
 	}
 }
 
+func TestNewWithHTTPClientRejectsNilClient(t *testing.T) {
+	_, err := NewWithHTTPClient(ClientConfig{BaseURL: "https://example.com"}, nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var perr *polyerrors.Error
+	if !errors.As(err, &perr) {
+		t.Fatalf("expected *polyerrors.Error, got %T", err)
+	}
+	if perr.Kind != polyerrors.ErrRequestBuild {
+		t.Fatalf("kind = %v", perr.Kind)
+	}
+}
+
 func TestNewInvalidBaseURLReturnsRequestBuildError(t *testing.T) {
 	_, err := New(ClientConfig{
 		BaseURL: "http://[::1",
