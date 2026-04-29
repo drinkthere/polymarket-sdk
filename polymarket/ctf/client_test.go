@@ -78,7 +78,7 @@ func TestClientCloseIsNoOpWithoutCloser(t *testing.T) {
 	}
 }
 
-func TestClientCloseUsesInjectedCloser(t *testing.T) {
+func TestClientCloseDoesNotCloseInjectedCloser(t *testing.T) {
 	caller := &stubClosableCaller{}
 
 	client, err := NewClientWithCaller(caller)
@@ -89,14 +89,36 @@ func TestClientCloseUsesInjectedCloser(t *testing.T) {
 	if err := client.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
-	if !caller.closed {
-		t.Fatal("expected injected closer to be closed")
+	if caller.closed {
+		t.Fatal("expected injected closer to remain open")
 	}
 	if err := client.Close(); err != nil {
 		t.Fatalf("second Close() error = %v", err)
 	}
-	if caller.closeCalls != 1 {
-		t.Fatalf("close calls = %d want 1", caller.closeCalls)
+	if caller.closeCalls != 0 {
+		t.Fatalf("close calls = %d want 0", caller.closeCalls)
+	}
+}
+
+func TestClientCloseUsesOwnedCloser(t *testing.T) {
+	closeCalls := 0
+
+	client, err := newClient(stubContractCaller{}, func() error {
+		closeCalls++
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("newClient() error = %v", err)
+	}
+
+	if err := client.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatalf("second Close() error = %v", err)
+	}
+	if closeCalls != 1 {
+		t.Fatalf("close calls = %d want 1", closeCalls)
 	}
 }
 
@@ -208,10 +230,12 @@ func TestBuildRedeemPositionsCalldataBuildsCallDataAndTarget(t *testing.T) {
 
 func TestBuildRedeemPositionsCalldataUsesLegacyUSDCOverrideForZeroCollateral(t *testing.T) {
 	legacy := USDCTokenAddress
+	modern := USDCAddress
 	override := common.HexToAddress("0x1111111111111111111111111111111111111111")
 	USDCTokenAddress = override
 	defer func() {
 		USDCTokenAddress = legacy
+		USDCAddress = modern
 	}()
 
 	_, data, err := BuildRedeemPositionsCalldata(RedeemPositionsRequest{
@@ -229,6 +253,64 @@ func TestBuildRedeemPositionsCalldataUsesLegacyUSDCOverrideForZeroCollateral(t *
 	}
 	if got := args[0].(common.Address); got != override {
 		t.Fatalf("collateral = %s want %s", got.Hex(), override.Hex())
+	}
+}
+
+func TestBuildRedeemPositionsCalldataUsesUSDCAddressOverrideForZeroCollateral(t *testing.T) {
+	legacy := USDCTokenAddress
+	modern := USDCAddress
+	override := common.HexToAddress("0x2222222222222222222222222222222222222222")
+	USDCAddress = override
+	defer func() {
+		USDCTokenAddress = legacy
+		USDCAddress = modern
+	}()
+
+	_, data, err := BuildRedeemPositionsCalldata(RedeemPositionsRequest{
+		ConditionID: "0x1234",
+		IndexSets:   []uint64{1, 2},
+	})
+	if err != nil {
+		t.Fatalf("BuildRedeemPositionsCalldata() error = %v", err)
+	}
+
+	method := mustTestABI(t, testCTFABIJSON).Methods["redeemPositions"]
+	args, err := method.Inputs.Unpack(data[4:])
+	if err != nil {
+		t.Fatalf("unpack inputs: %v", err)
+	}
+	if got := args[0].(common.Address); got != override {
+		t.Fatalf("collateral = %s want %s", got.Hex(), override.Hex())
+	}
+}
+
+func TestBuildRedeemPositionsCalldataPrefersLegacyOverrideWhenBothDiverge(t *testing.T) {
+	legacy := USDCTokenAddress
+	modern := USDCAddress
+	legacyOverride := common.HexToAddress("0x3333333333333333333333333333333333333333")
+	modernOverride := common.HexToAddress("0x4444444444444444444444444444444444444444")
+	USDCTokenAddress = legacyOverride
+	USDCAddress = modernOverride
+	defer func() {
+		USDCTokenAddress = legacy
+		USDCAddress = modern
+	}()
+
+	_, data, err := BuildRedeemPositionsCalldata(RedeemPositionsRequest{
+		ConditionID: "0x1234",
+		IndexSets:   []uint64{1, 2},
+	})
+	if err != nil {
+		t.Fatalf("BuildRedeemPositionsCalldata() error = %v", err)
+	}
+
+	method := mustTestABI(t, testCTFABIJSON).Methods["redeemPositions"]
+	args, err := method.Inputs.Unpack(data[4:])
+	if err != nil {
+		t.Fatalf("unpack inputs: %v", err)
+	}
+	if got := args[0].(common.Address); got != legacyOverride {
+		t.Fatalf("collateral = %s want %s", got.Hex(), legacyOverride.Hex())
 	}
 }
 
