@@ -86,6 +86,30 @@ func TestNewClientContextUsesDialContextAndOwnsResult(t *testing.T) {
 	}
 }
 
+func TestNewClientContextClassifiesInvalidRPCURLAsRequestBuild(t *testing.T) {
+	originalDial := dialRPCClient
+	t.Cleanup(func() {
+		dialRPCClient = originalDial
+	})
+
+	dialRPCClient = func(_ context.Context, _ string) (ContractCaller, func() error, error) {
+		return nil, nil, errors.New(`no known transport for URL scheme "bogus"`)
+	}
+
+	_, err := NewClientContext(t.Context(), Config{RPCURL: "bogus://rpc.example"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var typed *polyerrors.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected typed error, got %T", err)
+	}
+	if typed.Kind != polyerrors.ErrRequestBuild {
+		t.Fatalf("kind = %q want %q", typed.Kind, polyerrors.ErrRequestBuild)
+	}
+}
+
 func TestNewClientWithCallerRequiresCaller(t *testing.T) {
 	var caller ContractCaller
 
@@ -216,6 +240,7 @@ func TestIsResolvedClassifiesCallErrors(t *testing.T) {
 		err  error
 		kind polyerrors.ErrorKind
 	}{
+		{name: "net timeout", err: stubTimeoutError{}, kind: polyerrors.ErrTimeout},
 		{name: "deadline exceeded", err: context.DeadlineExceeded, kind: polyerrors.ErrTimeout},
 		{name: "canceled", err: context.Canceled, kind: polyerrors.ErrClosed},
 		{name: "client is closed", err: errors.New("client is closed"), kind: polyerrors.ErrClosed},
@@ -466,6 +491,12 @@ func (s *stubClosableCaller) Close() error {
 	s.closeCalls++
 	return nil
 }
+
+type stubTimeoutError struct{}
+
+func (stubTimeoutError) Error() string   { return "i/o timeout" }
+func (stubTimeoutError) Timeout() bool   { return true }
+func (stubTimeoutError) Temporary() bool { return false }
 
 func mustTestABI(t *testing.T, raw string) abi.ABI {
 	t.Helper()
