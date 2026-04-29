@@ -2,7 +2,9 @@ package positions
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -207,22 +209,22 @@ func TestClientListAllRejectsNegativeLimit(t *testing.T) {
 	t.Fatal("expected error")
 }
 
-func TestClientListAllReturnsTypedRequestBuildErrorBeforeOffsetExceedsCeiling(t *testing.T) {
+func TestClientListAllReturnsSuccessAtMaxOffsetBoundary(t *testing.T) {
 	requests := 0
 	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
-		if got := r.URL.Query().Get("offset"); got != "10000" {
-			t.Fatalf("offset query = %s, want 10000", got)
+		if got := r.URL.Query().Get("offset"); got != fmt.Sprintf("%d", (requests-1)*500) {
+			t.Fatalf("offset query = %s, want %d", got, (requests-1)*500)
 		}
-		if got := r.URL.Query().Get("limit"); got != "2" {
-			t.Fatalf("limit query = %s, want 2", got)
+		if got := r.URL.Query().Get("limit"); got != "500" {
+			t.Fatalf("limit query = %s, want 500", got)
 		}
 		if got := r.URL.Query().Get("sizeThreshold"); got != "0" {
 			t.Fatalf("sizeThreshold query = %s, want 0", got)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `[{"asset":"tok-1","conditionId":"cond-1","size":1,"avgPrice":0.10,"title":"A","outcome":"Yes","side":"BUY","negativeRisk":false,"outcomeIndex":0},{"asset":"tok-2","conditionId":"cond-2","size":2,"avgPrice":0.20,"title":"B","outcome":"No","side":"SELL","negativeRisk":true,"outcomeIndex":1}]`)
+		_, _ = io.WriteString(w, positionsJSONPage(t, (requests-1)*500, 500))
 	}))
 
 	client, err := NewClient(httpClient)
@@ -230,27 +232,21 @@ func TestClientListAllReturnsTypedRequestBuildErrorBeforeOffsetExceedsCeiling(t 
 		t.Fatalf("NewClient() error = %v", err)
 	}
 
-	_, err = client.ListAll(context.Background(), ListRequest{
-		User:   validUser333,
-		Limit:  2,
-		Offset: 10000,
+	resp, err := client.ListAll(context.Background(), ListRequest{
+		User:  validUser333,
+		Limit: 500,
 	})
-	if err == nil {
-		t.Fatal("expected error")
+	if err != nil {
+		t.Fatalf("ListAll() error = %v", err)
 	}
-	if requests != 1 {
-		t.Fatalf("requests = %d, want 1", requests)
+	if requests != 21 {
+		t.Fatalf("requests = %d, want 21", requests)
 	}
-
-	var typed *polyerrors.Error
-	if !errors.As(err, &typed) {
-		t.Fatalf("expected *errors.Error, got %T", err)
+	if len(resp.Positions) != 10500 {
+		t.Fatalf("len(resp.Positions) = %d, want 10500", len(resp.Positions))
 	}
-	if typed.Kind != polyerrors.ErrRequestBuild {
-		t.Fatalf("expected ErrRequestBuild, got %v", typed.Kind)
-	}
-	if typed.Op != "positions.list_all" {
-		t.Fatalf("expected op positions.list_all, got %s", typed.Op)
+	if resp.Positions[0].Asset != "tok-0" || resp.Positions[len(resp.Positions)-1].Asset != "tok-10499" {
+		t.Fatalf("unexpected boundary positions: first=%+v last=%+v", resp.Positions[0], resp.Positions[len(resp.Positions)-1])
 	}
 }
 
@@ -316,6 +312,47 @@ func TestClientListReturnsTypedProtocolErrorForInvalidDecodedPosition(t *testing
 	}
 	if typed.Method != http.MethodGet {
 		t.Fatalf("expected method GET, got %s", typed.Method)
+	}
+}
+
+func TestClientListReturnsTypedProtocolErrorForMissingRequiredScalarFields(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{name: "missing_size", body: `[{"asset":"tok-1","conditionId":"cond-1","avgPrice":0.10,"negativeRisk":false,"outcomeIndex":0}]`},
+		{name: "null_size", body: `[{"asset":"tok-1","conditionId":"cond-1","size":null,"avgPrice":0.10,"negativeRisk":false,"outcomeIndex":0}]`},
+		{name: "missing_avg_price", body: `[{"asset":"tok-1","conditionId":"cond-1","size":1,"negativeRisk":false,"outcomeIndex":0}]`},
+		{name: "missing_negative_risk", body: `[{"asset":"tok-1","conditionId":"cond-1","size":1,"avgPrice":0.10,"outcomeIndex":0}]`},
+		{name: "missing_outcome_index", body: `[{"asset":"tok-1","conditionId":"cond-1","size":1,"avgPrice":0.10,"negativeRisk":false}]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, tc.body)
+			}))
+
+			client, err := NewClient(httpClient)
+			if err != nil {
+				t.Fatalf("NewClient() error = %v", err)
+			}
+
+			_, err = client.List(context.Background(), ListRequest{User: validUser444})
+			if err == nil {
+				t.Fatal("expected error")
+			}
+
+			var typed *polyerrors.Error
+			if !errors.As(err, &typed) {
+				t.Fatalf("expected *errors.Error, got %T", err)
+			}
+			if typed.Kind != polyerrors.ErrProtocol {
+				t.Fatalf("expected ErrProtocol, got %v", typed.Kind)
+			}
+			if typed.Op != "positions.list" {
+				t.Fatalf("expected op positions.list, got %s", typed.Op)
+			}
+		})
 	}
 }
 
@@ -526,6 +563,7 @@ func TestClientListAllRejectsNegativeOffsetAndInvalidSizeThreshold(t *testing.T)
 		req  ListRequest
 	}{
 		{name: "offset_negative", req: ListRequest{User: validUser555, Offset: -1}},
+		{name: "offset_too_large", req: ListRequest{User: validUser555, Offset: 10001}},
 		{name: "size_threshold_negative", req: ListRequest{User: validUser555, SizeThreshold: "-1"}},
 		{name: "size_threshold_alpha", req: ListRequest{User: validUser555, SizeThreshold: "abc"}},
 	} {
@@ -579,4 +617,42 @@ func newHTTPClientWithServer(t *testing.T, handler http.Handler) *httpx.Client {
 
 func boolPtr(v bool) *bool {
 	return &v
+}
+
+type pagePosition struct {
+	Asset        string  `json:"asset"`
+	ConditionID  string  `json:"conditionId"`
+	Size         float64 `json:"size"`
+	AvgPrice     float64 `json:"avgPrice"`
+	Title        string  `json:"title"`
+	Outcome      string  `json:"outcome"`
+	Side         string  `json:"side"`
+	NegativeRisk bool    `json:"negativeRisk"`
+	OutcomeIndex int     `json:"outcomeIndex"`
+}
+
+func positionsJSONPage(t *testing.T, start int, count int) string {
+	t.Helper()
+
+	page := make([]pagePosition, 0, count)
+	for i := 0; i < count; i++ {
+		idx := start + i
+		page = append(page, pagePosition{
+			Asset:        fmt.Sprintf("tok-%d", idx),
+			ConditionID:  fmt.Sprintf("cond-%d", idx),
+			Size:         float64(idx + 1),
+			AvgPrice:     0.1,
+			Title:        "A",
+			Outcome:      "Yes",
+			Side:         "BUY",
+			NegativeRisk: false,
+			OutcomeIndex: 0,
+		})
+	}
+
+	raw, err := json.Marshal(page)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	return string(raw)
 }
