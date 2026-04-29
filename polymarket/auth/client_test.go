@@ -12,6 +12,7 @@ import (
 
 func TestClientEnsureCredentialsFallsBackToDerive(t *testing.T) {
 	t.Parallel()
+	const walletAddress = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
 
 	var createCalled bool
 	var deriveCalled bool
@@ -20,8 +21,8 @@ func TestClientEnsureCredentialsFallsBackToDerive(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/auth/api-key":
 			createCalled = true
-			if got := r.Header.Get("POLY_ADDRESS"); got == "" {
-				t.Fatalf("expected POLY_ADDRESS header")
+			if got := r.Header.Get("POLY_ADDRESS"); got != walletAddress {
+				t.Fatalf("POLY_ADDRESS = %q, want %q", got, walletAddress)
 			}
 			if got := r.Header.Get("POLY_SIGNATURE"); got == "" {
 				t.Fatalf("expected POLY_SIGNATURE header")
@@ -79,5 +80,48 @@ func TestClientEnsureCredentialsFallsBackToDerive(t *testing.T) {
 	}
 	if creds.Passphrase != "passphrase" {
 		t.Fatalf("unexpected passphrase: %q", creds.Passphrase)
+	}
+}
+
+func TestClientCreateOrDeriveAPIKeyFallsBackOnBadRequest(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/auth/api-key":
+			http.Error(w, `{"error":"Could not create api key"}`, http.StatusBadRequest)
+		case r.Method == http.MethodGet && r.URL.Path == "/auth/derive-api-key":
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"apiKey":     "derived-api-key",
+				"secret":     "c2VjcmV0",
+				"passphrase": "passphrase",
+			})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	httpClient, err := httpx.New(httpx.ClientConfig{BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("httpx.New() error: %v", err)
+	}
+
+	client, err := NewClient(httpClient, Config{
+		FunderAddress: "0x1111111111111111111111111111111111111111",
+		PrivateKey:    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+		ChainID:       137,
+		SignatureType: 2,
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error: %v", err)
+	}
+
+	creds, err := client.CreateOrDeriveAPIKey(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("CreateOrDeriveAPIKey() error: %v", err)
+	}
+	if creds.Key != "derived-api-key" {
+		t.Fatalf("unexpected api key: %q", creds.Key)
 	}
 }

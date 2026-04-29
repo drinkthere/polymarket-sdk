@@ -162,9 +162,6 @@ func (s *Signer) Address() string {
 	if s == nil {
 		return ""
 	}
-	if s.signatureType == 2 && strings.TrimSpace(s.funder) != "" {
-		return strings.ToLower(s.funder)
-	}
 	return strings.ToLower(s.address.Hex())
 }
 
@@ -203,7 +200,7 @@ func (s *Signer) CreateL2Headers(creds APICredentials, args L2HeaderArgs, at tim
 	}
 
 	ts := strconv.FormatInt(at.Unix(), 10)
-	message := ts + args.Method + args.RequestPath + canonicalizeBody(args.Body)
+	message := ts + args.Method + args.RequestPath + args.Body
 
 	mac := hmac.New(sha256.New, secretBytes)
 	_, _ = mac.Write([]byte(message))

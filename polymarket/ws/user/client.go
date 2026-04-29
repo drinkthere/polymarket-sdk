@@ -1,6 +1,7 @@
 package user
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -21,6 +22,8 @@ type Config struct {
 
 	WriteTimeout     time.Duration
 	PingInterval     time.Duration
+	AppPingInterval  time.Duration
+	AppPingPayload   []byte
 	Reconnect        bool
 	ReconnectBackoff time.Duration
 }
@@ -69,18 +72,18 @@ type FillMakerOrder struct {
 }
 
 type FillEvent struct {
-	ID         string           `json:"id"`
-	AssetID    string           `json:"asset_id"`
-	LastUpdate string           `json:"last_update"`
+	ID          string           `json:"id"`
+	AssetID     string           `json:"asset_id"`
+	LastUpdate  string           `json:"last_update"`
 	MakerOrders []FillMakerOrder `json:"maker_orders"`
-	Market     string           `json:"market"`
-	Owner      string           `json:"owner"`
-	Price      string           `json:"price"`
-	Side       string           `json:"side"`
-	Size       string           `json:"size"`
-	Status     string           `json:"status"`
-	Timestamp  string           `json:"timestamp"`
-	Type       string           `json:"type"`
+	Market      string           `json:"market"`
+	Owner       string           `json:"owner"`
+	Price       string           `json:"price"`
+	Side        string           `json:"side"`
+	Size        string           `json:"size"`
+	Status      string           `json:"status"`
+	Timestamp   string           `json:"timestamp"`
+	Type        string           `json:"type"`
 }
 
 type Client struct {
@@ -94,6 +97,8 @@ func NewClient(cfg Config) (*Client, error) {
 		Dialer:           cfg.Dialer,
 		WriteTimeout:     cfg.WriteTimeout,
 		PingInterval:     cfg.PingInterval,
+		AppPingInterval:  cfg.AppPingInterval,
+		AppPingPayload:   cfg.AppPingPayload,
 		Reconnect:        cfg.Reconnect,
 		ReconnectBackoff: cfg.ReconnectBackoff,
 	})
@@ -156,6 +161,10 @@ func (c *Client) ReadMessage(ctx context.Context) (Message, error) {
 }
 
 func DecodeEvents(raw []byte) ([]Event, error) {
+	if isRawPONG(raw) {
+		return nil, nil
+	}
+
 	var batch []json.RawMessage
 	if err := json.Unmarshal(raw, &batch); err != nil {
 		var single json.RawMessage
@@ -190,4 +199,8 @@ func DecodeEvents(raw []byte) ([]Event, error) {
 		}
 	}
 	return events, nil
+}
+
+func isRawPONG(raw []byte) bool {
+	return bytes.Equal(bytes.TrimSpace(raw), []byte("PONG"))
 }

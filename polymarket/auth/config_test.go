@@ -45,25 +45,26 @@ func TestConfigValidateBothMissingReturnsFunderAddressFirst(t *testing.T) {
 
 func TestNewSignerBuildsStableHeaders(t *testing.T) {
 	cfg := Config{
-		FunderAddress: "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+		FunderAddress: "0x1111111111111111111111111111111111111111",
 		PrivateKey:    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
 		ChainID:       80002,
 	}
+	const walletAddress = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
 
 	signer, err := NewSigner(cfg)
 	if err != nil {
 		t.Fatalf("NewSigner() error = %v", err)
 	}
-	if got := signer.Address(); got != cfg.FunderAddress {
-		t.Fatalf("Address() = %q, want %q", got, cfg.FunderAddress)
+	if got := signer.Address(); got != walletAddress {
+		t.Fatalf("Address() = %q, want %q", got, walletAddress)
 	}
 
 	l1, err := signer.CreateL1Headers(time.Unix(1700000000, 0), 3)
 	if err != nil {
 		t.Fatalf("CreateL1Headers() error = %v", err)
 	}
-	if l1.POLY_ADDRESS != cfg.FunderAddress {
-		t.Fatalf("POLY_ADDRESS = %q, want %q", l1.POLY_ADDRESS, cfg.FunderAddress)
+	if l1.POLY_ADDRESS != walletAddress {
+		t.Fatalf("POLY_ADDRESS = %q, want %q", l1.POLY_ADDRESS, walletAddress)
 	}
 	if l1.POLY_TIMESTAMP != "1700000000" {
 		t.Fatalf("POLY_TIMESTAMP = %q", l1.POLY_TIMESTAMP)
@@ -82,7 +83,7 @@ func TestNewSignerBuildsStableHeaders(t *testing.T) {
 	}, L2HeaderArgs{
 		Method:      "test-sign",
 		RequestPath: "/orders",
-		Body:        `{"hash": "0x123"}`,
+		Body:        `{"hash":"0x123"}`,
 	}, time.Unix(1000000, 0))
 	if err != nil {
 		t.Fatalf("CreateL2Headers() error = %v", err)
@@ -95,6 +96,44 @@ func TestNewSignerBuildsStableHeaders(t *testing.T) {
 	}
 	if l2.POLY_PASSPHRASE != "pass-1" {
 		t.Fatalf("POLY_PASSPHRASE = %q", l2.POLY_PASSPHRASE)
+	}
+}
+
+func TestCreateL2HeadersSignsExactBodyBytes(t *testing.T) {
+	signer, err := NewSigner(Config{
+		FunderAddress: "0x1111111111111111111111111111111111111111",
+		PrivateKey:    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+		ChainID:       80002,
+	})
+	if err != nil {
+		t.Fatalf("NewSigner() error = %v", err)
+	}
+
+	creds := APICredentials{
+		Key:        "key-1",
+		Secret:     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+		Passphrase: "pass-1",
+	}
+	at := time.Unix(1000000, 0)
+	compact, err := signer.CreateL2Headers(creds, L2HeaderArgs{
+		Method:      http.MethodPost,
+		RequestPath: "/order",
+		Body:        `{"hash":"0x123"}`,
+	}, at)
+	if err != nil {
+		t.Fatalf("CreateL2Headers(compact) error = %v", err)
+	}
+	spaced, err := signer.CreateL2Headers(creds, L2HeaderArgs{
+		Method:      http.MethodPost,
+		RequestPath: "/order",
+		Body:        `{"hash": "0x123"}`,
+	}, at)
+	if err != nil {
+		t.Fatalf("CreateL2Headers(spaced) error = %v", err)
+	}
+
+	if compact.POLY_SIGNATURE == spaced.POLY_SIGNATURE {
+		t.Fatalf("CreateL2Headers signed canonical body; signatures matched for different request bytes: %q", compact.POLY_SIGNATURE)
 	}
 }
 

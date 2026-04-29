@@ -65,7 +65,7 @@ func (c *Client) CreateOrDeriveAPIKey(ctx context.Context, nonce int64) (Credent
 
 	if err != nil {
 		var typed *polyerrors.Error
-		if !errors.As(err, &typed) || typed.Kind != polyerrors.ErrAPI || typed.StatusCode != http.StatusConflict {
+		if !errors.As(err, &typed) || typed.Kind != polyerrors.ErrAPI || typed.StatusCode < http.StatusBadRequest || typed.StatusCode >= http.StatusInternalServerError {
 			return Credentials{}, err
 		}
 	}

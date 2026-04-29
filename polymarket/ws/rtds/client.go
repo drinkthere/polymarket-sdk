@@ -18,8 +18,10 @@ type Config struct {
 	Header *http.Header
 	Dialer *websocket.Dialer
 
-	WriteTimeout time.Duration
-	PingInterval time.Duration
+	WriteTimeout    time.Duration
+	PingInterval    time.Duration
+	AppPingInterval time.Duration
+	AppPingPayload  []byte
 
 	Reconnect        bool
 	ReconnectBackoff time.Duration
@@ -75,6 +77,8 @@ func NewClient(cfg Config) (*Client, error) {
 		Dialer:           cfg.Dialer,
 		WriteTimeout:     cfg.WriteTimeout,
 		PingInterval:     cfg.PingInterval,
+		AppPingInterval:  cfg.AppPingInterval,
+		AppPingPayload:   cfg.AppPingPayload,
 		Reconnect:        cfg.Reconnect,
 		ReconnectBackoff: cfg.ReconnectBackoff,
 	})

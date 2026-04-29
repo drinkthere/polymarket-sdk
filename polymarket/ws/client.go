@@ -21,8 +21,10 @@ type ClientConfig struct {
 	Header *http.Header
 	Dialer *websocket.Dialer
 
-	WriteTimeout time.Duration
-	PingInterval time.Duration
+	WriteTimeout    time.Duration
+	PingInterval    time.Duration
+	AppPingInterval time.Duration
+	AppPingPayload  []byte
 
 	Reconnect        bool
 	ReconnectBackoff time.Duration
@@ -65,6 +67,7 @@ type Client struct {
 const (
 	defaultWriteTimeout     = 5 * time.Second
 	defaultReconnectBackoff = 250 * time.Millisecond
+	defaultAppPingPayload   = "PING"
 )
 
 func NewClient(cfg ClientConfig) (*Client, error) {
@@ -90,6 +93,10 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	if backoff <= 0 {
 		backoff = defaultReconnectBackoff
 	}
+	appPingPayload := append([]byte(nil), cfg.AppPingPayload...)
+	if cfg.AppPingInterval > 0 && len(appPingPayload) == 0 {
+		appPingPayload = []byte(defaultAppPingPayload)
+	}
 
 	closeCtx, closeCancel := context.WithCancel(context.Background())
 
@@ -106,6 +113,7 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	c.cfg.URL = url
 	c.cfg.WriteTimeout = wt
 	c.cfg.ReconnectBackoff = backoff
+	c.cfg.AppPingPayload = appPingPayload
 	return c, nil
 }
 
@@ -251,6 +259,13 @@ func (c *Client) startSession(conn *websocket.Conn) {
 			c.keepaliveLoop(ctx, conn, c.cfg.PingInterval)
 		}()
 	}
+	if c.cfg.AppPingInterval > 0 {
+		c.wg.Add(1)
+		go func() {
+			defer c.wg.Done()
+			c.appPingLoop(ctx, conn, c.cfg.AppPingInterval, c.cfg.AppPingPayload)
+		}()
+	}
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
@@ -280,6 +295,36 @@ func (c *Client) keepaliveLoop(ctx context.Context, conn *websocket.Conn, interv
 			c.writeMu.Lock()
 			_ = conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(c.cfg.WriteTimeout))
 			c.writeMu.Unlock()
+		}
+	}
+}
+
+func (c *Client) appPingLoop(ctx context.Context, conn *websocket.Conn, interval time.Duration, payload []byte) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if !c.isActiveConn(conn) {
+				return
+			}
+			deadline := time.Now().Add(c.cfg.WriteTimeout)
+			c.writeMu.Lock()
+			_ = conn.SetWriteDeadline(deadline)
+			err := conn.WriteMessage(websocket.TextMessage, payload)
+			c.writeMu.Unlock()
+			if err != nil {
+				if c.isActiveConn(conn) {
+					c.emitErr(c.writeError("ws.app_ping", err))
+					if c.cfg.Reconnect && !c.isClosed() {
+						c.startReconnect()
+					}
+				}
+				return
+			}
 		}
 	}
 }
@@ -410,21 +455,25 @@ func (c *Client) Write(ctx context.Context, payload []byte) error {
 	werr := conn.WriteMessage(websocket.TextMessage, payload)
 	c.writeMu.Unlock()
 	if werr != nil {
-		kind := polyerrors.ErrNetwork
-		if errors.Is(werr, context.Canceled) {
-			kind = polyerrors.ErrClosed
-		} else if errors.Is(werr, context.DeadlineExceeded) || errors.Is(werr, os.ErrDeadlineExceeded) {
-			kind = polyerrors.ErrTimeout
-		} else if ne, ok := werr.(net.Error); ok && ne.Timeout() {
-			kind = polyerrors.ErrTimeout
-		}
-		perr := &polyerrors.Error{Kind: kind, Op: "ws.write", URL: c.cfg.URL, Message: werr.Error(), Cause: werr}
+		perr := c.writeError("ws.write", werr)
 		if c.isActiveConn(conn) {
 			c.emitErr(perr)
 		}
 		return perr
 	}
 	return nil
+}
+
+func (c *Client) writeError(op string, err error) *polyerrors.Error {
+	kind := polyerrors.ErrNetwork
+	if errors.Is(err, context.Canceled) {
+		kind = polyerrors.ErrClosed
+	} else if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
+		kind = polyerrors.ErrTimeout
+	} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		kind = polyerrors.ErrTimeout
+	}
+	return &polyerrors.Error{Kind: kind, Op: op, URL: c.cfg.URL, Message: err.Error(), Cause: err}
 }
 
 func (c *Client) WriteText(ctx context.Context, payload []byte) error {

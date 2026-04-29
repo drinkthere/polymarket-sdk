@@ -70,6 +70,59 @@ func TestClient_Keepalive_SendsPing(t *testing.T) {
 	}
 }
 
+func TestClient_AppPingInterval_SendsTextPING(t *testing.T) {
+	t.Parallel()
+
+	textCh := make(chan []byte, 1)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		up := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+		c, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade: %v", err)
+			return
+		}
+		defer c.Close()
+
+		for {
+			mt, payload, err := c.ReadMessage()
+			if err != nil {
+				return
+			}
+			if mt == websocket.TextMessage {
+				textCh <- append([]byte(nil), payload...)
+				return
+			}
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := NewClient(ClientConfig{
+		URL:             "ws" + srv.URL[len("http"):],
+		AppPingInterval: 25 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := c.Connect(ctx); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	select {
+	case got := <-textCh:
+		if string(got) != "PING" {
+			t.Fatalf("expected text PING, got %q", string(got))
+		}
+	case <-ctx.Done():
+		t.Fatalf("expected text PING before timeout: %v", ctx.Err())
+	}
+}
+
 func TestClient_Reconnect_ReplaysSubscriptions(t *testing.T) {
 	t.Parallel()
 

@@ -30,6 +30,8 @@ func NewChannelClient(cfg Config) (*ChannelClient, error) {
 		Dialer:           cfg.Dialer,
 		WriteTimeout:     cfg.WriteTimeout,
 		PingInterval:     cfg.PingInterval,
+		AppPingInterval:  cfg.AppPingInterval,
+		AppPingPayload:   cfg.AppPingPayload,
 		Reconnect:        cfg.Reconnect,
 		ReconnectBackoff: cfg.ReconnectBackoff,
 	})

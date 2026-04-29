@@ -164,6 +164,16 @@ func TestDecodeEventsOrderAndTrade(t *testing.T) {
 	}
 }
 
+func TestDecodeEventsIgnoresRawPONGHeartbeat(t *testing.T) {
+	events, err := DecodeEvents([]byte("PONG"))
+	if err != nil {
+		t.Fatalf("DecodeEvents() error = %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("len(DecodeEvents()) = %d, want 0", len(events))
+	}
+}
+
 func validCreds() polyauth.APICredentials {
 	return polyauth.APICredentials{
 		Key:        "key-1",
