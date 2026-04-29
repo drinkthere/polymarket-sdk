@@ -70,12 +70,16 @@ func (c *Client) GetBalance(ctx context.Context, req GetBalanceRequest) (GetBala
 		assetType = AssetTypeCollateral
 	}
 	signatureType := effectiveSignatureType(req.SignatureType)
+	tokenID, err := validateConditionalTokenID("balances.get_balance", assetType, req.TokenID)
+	if err != nil {
+		return GetBalanceResponse{}, err
+	}
 
 	query := url.Values{}
 	query.Set("asset_type", string(assetType))
 	query.Set("signature_type", strconv.Itoa(signatureType))
-	if s := strings.TrimSpace(req.TokenID); s != "" {
-		query.Set("token_id", s)
+	if tokenID != "" {
+		query.Set("token_id", tokenID)
 	}
 
 	headers, err := c.signer.CreateL2Headers(creds, polyauth.L2HeaderArgs{
@@ -115,13 +119,9 @@ func (c *Client) UpdateAllowance(ctx context.Context, req UpdateAllowanceRequest
 		assetType = AssetTypeCollateral
 	}
 	signatureType := effectiveSignatureType(req.SignatureType)
-	tokenID := strings.TrimSpace(req.TokenID)
-	if assetType == AssetTypeConditional && tokenID == "" {
-		return UpdateAllowanceResponse{}, &polyerrors.Error{
-			Kind:    polyerrors.ErrRequestBuild,
-			Op:      "balances.update_allowance",
-			Message: "token_id is required for conditional asset type",
-		}
+	tokenID, err := validateConditionalTokenID("balances.update_allowance", assetType, req.TokenID)
+	if err != nil {
+		return UpdateAllowanceResponse{}, err
 	}
 
 	query := url.Values{}
@@ -150,7 +150,7 @@ func (c *Client) UpdateAllowance(ctx context.Context, req UpdateAllowanceRequest
 		return UpdateAllowanceResponse{}, err
 	}
 	if len(bytes.TrimSpace(body)) == 0 {
-		return UpdateAllowanceResponse{}, nil
+		return UpdateAllowanceResponse{Updated: true}, nil
 	}
 
 	var resp UpdateAllowanceResponse
@@ -176,4 +176,16 @@ func effectiveSignatureType(signatureType int) int {
 		return defaultRequestSignatureType
 	}
 	return signatureType
+}
+
+func validateConditionalTokenID(op, assetType, tokenID string) (string, error) {
+	trimmed := strings.TrimSpace(tokenID)
+	if assetType == AssetTypeConditional && trimmed == "" {
+		return "", &polyerrors.Error{
+			Kind:    polyerrors.ErrRequestBuild,
+			Op:      op,
+			Message: "token_id is required for conditional asset type",
+		}
+	}
+	return trimmed, nil
 }

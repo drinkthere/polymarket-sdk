@@ -2,6 +2,7 @@ package orders
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -424,6 +425,50 @@ func TestGetUserTradesFailsOnRepeatedCursor(t *testing.T) {
 	}
 	if !strings.Contains(typed.Message, "repeated next_cursor") {
 		t.Fatalf("unexpected message: %q", typed.Message)
+	}
+}
+
+func TestGetUserTradesRawAllowsMoreThanThousandPages(t *testing.T) {
+	const totalPages = 1001
+	var calls int
+
+	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/data/trades" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		calls++
+
+		wantCursor := "MA=="
+		if calls > 1 {
+			wantCursor = fmt.Sprintf("cursor-%d", calls-1)
+		}
+		if got := r.URL.Query().Get("next_cursor"); got != wantCursor {
+			t.Fatalf("next_cursor = %q, want %q", got, wantCursor)
+		}
+
+		nextCursor := "LTE="
+		if calls < totalPages {
+			nextCursor = fmt.Sprintf("cursor-%d", calls)
+		}
+		_, _ = io.WriteString(w, fmt.Sprintf(`{"data":[{"id":"tr-%d"}],"next_cursor":"%s"}`, calls, nextCursor))
+	}))
+
+	client, err := NewClient(httpClient, validAuthConfig())
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	raw, err := client.GetUserTradesRaw(t.Context(), GetUserTradesRawRequest{
+		Credentials: validCreds(),
+	})
+	if err != nil {
+		t.Fatalf("GetUserTradesRaw() error = %v", err)
+	}
+	if calls != totalPages {
+		t.Fatalf("calls = %d, want %d", calls, totalPages)
+	}
+	if len(raw) != totalPages {
+		t.Fatalf("len(raw) = %d, want %d", len(raw), totalPages)
 	}
 }
 
