@@ -11,6 +11,7 @@ import (
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/ethclient"
 
 	polyerrors "github.com/drinkthere/polymarket-sdk/polymarket/errors"
 )
@@ -38,7 +39,30 @@ type Client struct {
 	caller ContractCaller
 }
 
-func NewClient(caller ContractCaller) (*Client, error) {
+func NewClient(cfg Config) (*Client, error) {
+	rpcURL := strings.TrimSpace(cfg.RPCURL)
+	if rpcURL == "" {
+		return nil, &polyerrors.Error{
+			Kind:    polyerrors.ErrRequestBuild,
+			Op:      "ctf.new",
+			Message: "rpc_url is required",
+		}
+	}
+
+	eth, err := ethclient.Dial(rpcURL)
+	if err != nil {
+		return nil, &polyerrors.Error{
+			Kind:    polyerrors.ErrNetwork,
+			Op:      "ctf.new",
+			Message: err.Error(),
+			Cause:   err,
+		}
+	}
+
+	return NewClientWithCaller(eth)
+}
+
+func NewClientWithCaller(caller ContractCaller) (*Client, error) {
 	if isNilContractCaller(caller) {
 		return nil, &polyerrors.Error{
 			Kind:    polyerrors.ErrRequestBuild,
@@ -107,7 +131,7 @@ func (c *Client) IsResolved(ctx context.Context, conditionID string) (bool, erro
 	return denominator.Sign() > 0, nil
 }
 
-func RedeemPositions(req RedeemPositionsRequest) (common.Address, []byte, error) {
+func BuildRedeemPositionsCalldata(req RedeemPositionsRequest) (common.Address, []byte, error) {
 	conditionHash, indexSets, collateral, err := validateRedeemRequest(req)
 	if err != nil {
 		return common.Address{}, nil, err
@@ -127,7 +151,7 @@ func RedeemPositions(req RedeemPositionsRequest) (common.Address, []byte, error)
 	return CTFContractAddress, data, nil
 }
 
-func NegRiskRedeem(req NegRiskRedeemRequest) (common.Address, []byte, error) {
+func BuildNegRiskRedeemCalldata(req NegRiskRedeemRequest) (common.Address, []byte, error) {
 	conditionHash, err := parseConditionID(req.ConditionID)
 	if err != nil {
 		return common.Address{}, nil, requestError("ctf.neg_risk_redeem", err)
@@ -152,7 +176,7 @@ func NegRiskRedeem(req NegRiskRedeemRequest) (common.Address, []byte, error) {
 	return NegRiskAdapterAddress, data, nil
 }
 
-func MergePositions(req MergePositionsRequest) (common.Address, []byte, error) {
+func BuildMergePositionsCalldata(req MergePositionsRequest) (common.Address, []byte, error) {
 	conditionHash, indexSets, collateral, err := validateMergeRequest(req)
 	if err != nil {
 		return common.Address{}, nil, err
@@ -171,6 +195,18 @@ func MergePositions(req MergePositionsRequest) (common.Address, []byte, error) {
 	}
 
 	return CTFContractAddress, data, nil
+}
+
+func RedeemPositions(req RedeemPositionsRequest) (common.Address, []byte, error) {
+	return BuildRedeemPositionsCalldata(req)
+}
+
+func NegRiskRedeem(req NegRiskRedeemRequest) (common.Address, []byte, error) {
+	return BuildNegRiskRedeemCalldata(req)
+}
+
+func MergePositions(req MergePositionsRequest) (common.Address, []byte, error) {
+	return BuildMergePositionsCalldata(req)
 }
 
 func validateRedeemRequest(req RedeemPositionsRequest) (common.Hash, []*big.Int, common.Address, error) {
@@ -205,7 +241,7 @@ func validateMergeRequest(req MergePositionsRequest) (common.Hash, []*big.Int, c
 
 func defaultCollateral(collateral common.Address) common.Address {
 	if collateral == (common.Address{}) {
-		return USDCTokenAddress
+		return USDCAddress
 	}
 	return collateral
 }

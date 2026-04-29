@@ -11,11 +11,16 @@ import (
 var (
 	CTFContractAddress    = common.HexToAddress("0x4D97DCd97eC945f40cF65F87097ACe5EA0476045")
 	NegRiskAdapterAddress = common.HexToAddress("0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296")
-	USDCTokenAddress      = common.HexToAddress("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174")
+	USDCAddress           = common.HexToAddress("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174")
+	USDCTokenAddress      = USDCAddress
 )
 
 type ContractCaller interface {
 	CallContract(ctx context.Context, call ethereum.CallMsg, blockNumber *big.Int) ([]byte, error)
+}
+
+type Config struct {
+	RPCURL string
 }
 
 type RedeemPositionsRequest struct {
