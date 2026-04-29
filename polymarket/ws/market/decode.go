@@ -434,7 +434,13 @@ func inferMessageType(raw []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if len(events) == 0 || len(events) != len(batch) {
+	if len(events) == 0 {
+		if err := explicitUnknownBatchError(batch); err != nil {
+			return "", err
+		}
+		return "", nil
+	}
+	if len(events) != len(batch) {
 		return "", nil
 	}
 	kind := eventKind(events[0])
@@ -447,6 +453,48 @@ func inferMessageType(raw []byte) (string, error) {
 		}
 	}
 	return kind, nil
+}
+
+func explicitUnknownBatchError(batch []json.RawMessage) error {
+	if len(batch) == 0 {
+		return nil
+	}
+
+	var firstUnknown json.RawMessage
+	var firstUnknownKind string
+	unknownCount := 0
+
+	for _, item := range batch {
+		var meta eventMeta
+		if err := json.Unmarshal(item, &meta); err != nil {
+			return decodeError("market.decode", item, err)
+		}
+
+		kind := meta.kind()
+		if kind == "" || meta.isFallback() || isSupportedEventKind(kind) {
+			return nil
+		}
+
+		if unknownCount == 0 {
+			firstUnknown = item
+			firstUnknownKind = kind
+		}
+		unknownCount++
+	}
+
+	if unknownCount == len(batch) {
+		return decodeError("market.decode", firstUnknown, fmt.Errorf("unsupported event_type %q", firstUnknownKind))
+	}
+	return nil
+}
+
+func isSupportedEventKind(kind string) bool {
+	switch kind {
+	case "book", "price_change", "best_bid_ask", "last_trade_price", "tick_size_change", "new_market", "market_resolved":
+		return true
+	default:
+		return false
+	}
 }
 
 func eventKind(event Event) string {
