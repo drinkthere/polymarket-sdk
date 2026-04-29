@@ -180,23 +180,9 @@ func TestClientListAllDefaultsLimitTo500(t *testing.T) {
 	}
 }
 
-func TestClientListAllNegativeLimitDefaultsTo500(t *testing.T) {
+func TestClientListAllRejectsNegativeLimit(t *testing.T) {
 	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.URL.Query().Get("user"); got != validUser222 {
-			t.Fatalf("user query = %s, want %s", got, validUser222)
-		}
-		if got := r.URL.Query().Get("sizeThreshold"); got != "0" {
-			t.Fatalf("sizeThreshold query = %s, want 0", got)
-		}
-		if got := r.URL.Query().Get("limit"); got != "500" {
-			t.Fatalf("limit query = %s, want 500", got)
-		}
-		if got := r.URL.Query().Get("offset"); got != "0" {
-			t.Fatalf("offset query = %s, want 0", got)
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `[]`)
+		t.Fatal("server should not be called for request build errors")
 	}))
 
 	client, err := NewClient(httpClient)
@@ -204,13 +190,21 @@ func TestClientListAllNegativeLimitDefaultsTo500(t *testing.T) {
 		t.Fatalf("NewClient() error = %v", err)
 	}
 
-	resp, err := client.ListAll(context.Background(), ListRequest{User: validUser222, Limit: -1})
+	_, err = client.ListAll(context.Background(), ListRequest{User: validUser222, Limit: -1})
 	if err != nil {
-		t.Fatalf("ListAll() error = %v", err)
+		var typed *polyerrors.Error
+		if !errors.As(err, &typed) {
+			t.Fatalf("expected *errors.Error, got %T", err)
+		}
+		if typed.Kind != polyerrors.ErrRequestBuild {
+			t.Fatalf("expected ErrRequestBuild, got %v", typed.Kind)
+		}
+		if typed.Op != "positions.list_all" {
+			t.Fatalf("expected op positions.list_all, got %s", typed.Op)
+		}
+		return
 	}
-	if len(resp.Positions) != 0 {
-		t.Fatalf("len(resp.Positions) = %d, want 0", len(resp.Positions))
-	}
+	t.Fatal("expected error")
 }
 
 func TestClientListAllReturnsTypedRequestBuildErrorBeforeOffsetExceedsCeiling(t *testing.T) {
@@ -311,6 +305,7 @@ func TestClientListValidatesUser(t *testing.T) {
 		{name: "empty", user: ""},
 		{name: "whitespace", user: " \t\n "},
 		{name: "invalid_hex_address", user: "0xabc"},
+		{name: "missing_0x_prefix", user: "0000000000000000000000000000000000000abc"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := client.List(context.Background(), ListRequest{User: tc.user})
@@ -371,6 +366,46 @@ func TestClientListRejectsInvalidPaginationInputs(t *testing.T) {
 	}
 }
 
+func TestClientListRejectsInvalidSizeThreshold(t *testing.T) {
+	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("server should not be called for request build errors")
+	}))
+
+	client, err := NewClient(httpClient)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	for _, tc := range []struct {
+		name          string
+		sizeThreshold string
+	}{
+		{name: "negative", sizeThreshold: "-1"},
+		{name: "alpha", sizeThreshold: "abc"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := client.List(context.Background(), ListRequest{
+				User:          validUser555,
+				SizeThreshold: tc.sizeThreshold,
+			})
+			if err == nil {
+				t.Fatal("expected error")
+			}
+
+			var typed *polyerrors.Error
+			if !errors.As(err, &typed) {
+				t.Fatalf("expected *errors.Error, got %T", err)
+			}
+			if typed.Kind != polyerrors.ErrRequestBuild {
+				t.Fatalf("expected ErrRequestBuild, got %v", typed.Kind)
+			}
+			if typed.Op != "positions.list" {
+				t.Fatalf("expected op positions.list, got %s", typed.Op)
+			}
+		})
+	}
+}
+
 func TestClientListAllRejectsLimitAbove500(t *testing.T) {
 	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("server should not be called for request build errors")
@@ -398,6 +433,44 @@ func TestClientListAllRejectsLimitAbove500(t *testing.T) {
 	}
 	if typed.Op != "positions.list_all" {
 		t.Fatalf("expected op positions.list_all, got %s", typed.Op)
+	}
+}
+
+func TestClientListAllRejectsNegativeOffsetAndInvalidSizeThreshold(t *testing.T) {
+	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("server should not be called for request build errors")
+	}))
+
+	client, err := NewClient(httpClient)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		req  ListRequest
+	}{
+		{name: "offset_negative", req: ListRequest{User: validUser555, Offset: -1}},
+		{name: "size_threshold_negative", req: ListRequest{User: validUser555, SizeThreshold: "-1"}},
+		{name: "size_threshold_alpha", req: ListRequest{User: validUser555, SizeThreshold: "abc"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := client.ListAll(context.Background(), tc.req)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+
+			var typed *polyerrors.Error
+			if !errors.As(err, &typed) {
+				t.Fatalf("expected *errors.Error, got %T", err)
+			}
+			if typed.Kind != polyerrors.ErrRequestBuild {
+				t.Fatalf("expected ErrRequestBuild, got %v", typed.Kind)
+			}
+			if typed.Op != "positions.list_all" {
+				t.Fatalf("expected op positions.list_all, got %s", typed.Op)
+			}
+		})
 	}
 }
 
