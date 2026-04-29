@@ -75,7 +75,9 @@ func NewWithHTTPClient(cfg ClientConfig, raw *http.Client) (*Client, error) {
 	}
 
 	cloned := *raw
-	cloned.Timeout = effectiveTimeout(cfg.Timeout)
+	if cfg.Timeout > 0 {
+		cloned.Timeout = cfg.Timeout
+	}
 
 	return &Client{
 		baseURL:          base,

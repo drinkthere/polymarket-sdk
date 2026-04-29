@@ -115,11 +115,19 @@ func (c *Client) UpdateAllowance(ctx context.Context, req UpdateAllowanceRequest
 		assetType = AssetTypeCollateral
 	}
 	signatureType := effectiveSignatureType(req.SignatureType)
+	tokenID := strings.TrimSpace(req.TokenID)
+	if assetType == AssetTypeConditional && tokenID == "" {
+		return UpdateAllowanceResponse{}, &polyerrors.Error{
+			Kind:    polyerrors.ErrRequestBuild,
+			Op:      "balances.update_allowance",
+			Message: "token_id is required for conditional asset type",
+		}
+	}
 
 	query := url.Values{}
 	query.Set("asset_type", assetType)
 	query.Set("signature_type", strconv.Itoa(signatureType))
-	if tokenID := strings.TrimSpace(req.TokenID); tokenID != "" {
+	if tokenID != "" {
 		query.Set("token_id", tokenID)
 	}
 

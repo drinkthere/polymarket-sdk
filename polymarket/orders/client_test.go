@@ -378,6 +378,55 @@ func TestGetUserTradesRawReturnsTypedDecodeError(t *testing.T) {
 	}
 }
 
+func TestGetUserTradesFailsOnRepeatedCursor(t *testing.T) {
+	var calls int
+
+	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/data/trades" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		calls++
+		switch calls {
+		case 1:
+			if got := r.URL.Query().Get("next_cursor"); got != "MA==" {
+				t.Fatalf("next_cursor = %q", got)
+			}
+			_, _ = io.WriteString(w, `{"data":[{"id":"tr-1"}],"next_cursor":"MQ=="}`)
+		case 2:
+			if got := r.URL.Query().Get("next_cursor"); got != "MQ==" {
+				t.Fatalf("next_cursor = %q", got)
+			}
+			_, _ = io.WriteString(w, `{"data":[{"id":"tr-2"}],"next_cursor":"MQ=="}`)
+		default:
+			t.Fatalf("unexpected extra page %d", calls)
+		}
+	}))
+
+	client, err := NewClient(httpClient, validAuthConfig())
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	_, err = client.GetUserTrades(t.Context(), GetUserTradesRequest{Credentials: validCreds()})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var typed *polyerrors.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected typed error, got %T", err)
+	}
+	if typed.Kind != polyerrors.ErrProtocol {
+		t.Fatalf("expected ErrProtocol, got %v", typed.Kind)
+	}
+	if typed.Op != "orders.get_user_trades" {
+		t.Fatalf("unexpected op: %q", typed.Op)
+	}
+	if !strings.Contains(typed.Message, "repeated next_cursor") {
+		t.Fatalf("unexpected message: %q", typed.Message)
+	}
+}
+
 func TestPlaceMakerOrderPostsTypedPayload(t *testing.T) {
 	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/order" {

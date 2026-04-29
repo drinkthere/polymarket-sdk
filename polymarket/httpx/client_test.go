@@ -140,6 +140,30 @@ func TestNewWithHTTPClientAppliesConfiguredTimeoutToClonedClient(t *testing.T) {
 	}
 }
 
+func TestNewWithHTTPClientPreservesInjectedTimeoutWhenUnset(t *testing.T) {
+	rawClient := &http.Client{
+		Timeout:   0,
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) { return nil, nil }),
+	}
+
+	client, err := NewWithHTTPClient(ClientConfig{
+		BaseURL: "https://example.com",
+	}, rawClient)
+	if err != nil {
+		t.Fatalf("NewWithHTTPClient() error = %v", err)
+	}
+
+	if client.httpClient == rawClient {
+		t.Fatal("expected NewWithHTTPClient to clone the injected client")
+	}
+	if client.httpClient.Timeout != 0 {
+		t.Fatalf("client timeout = %s, want 0s", client.httpClient.Timeout)
+	}
+	if rawClient.Timeout != 0 {
+		t.Fatalf("raw client timeout mutated to %s", rawClient.Timeout)
+	}
+}
+
 func TestNewWithHTTPClientRejectsNilClient(t *testing.T) {
 	_, err := NewWithHTTPClient(ClientConfig{BaseURL: "https://example.com"}, nil)
 	if err == nil {

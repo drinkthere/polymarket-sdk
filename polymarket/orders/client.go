@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	polyauth "github.com/drinkthere/polymarket-sdk/polymarket/auth"
@@ -13,6 +14,7 @@ import (
 )
 
 const endCursor = "LTE="
+const maxTradePages = 1000
 
 type Client struct {
 	authClient *polyauth.Client
@@ -121,7 +123,13 @@ func (c *Client) GetUserTrades(ctx context.Context, req GetUserTradesRequest) ([
 
 	var all []UserTrade
 	nextCursor := "MA=="
-	for {
+	seenCursors := map[string]struct{}{}
+	for page := 0; page < maxTradePages; page++ {
+		if _, seen := seenCursors[nextCursor]; seen {
+			return nil, protocolError("orders.get_user_trades", "repeated next_cursor: "+nextCursor)
+		}
+		seenCursors[nextCursor] = struct{}{}
+
 		body, err := c.getUserTradesPage(ctx, creds, nextCursor, baseQuery, "orders.get_user_trades")
 		if err != nil {
 			return nil, err
@@ -141,6 +149,7 @@ func (c *Client) GetUserTrades(ctx context.Context, req GetUserTradesRequest) ([
 		}
 		nextCursor = page.NextCursor
 	}
+	return nil, protocolError("orders.get_user_trades", "pagination exceeded max pages="+strconv.Itoa(maxTradePages))
 }
 
 func (c *Client) GetUserTradesRaw(ctx context.Context, req GetUserTradesRawRequest) ([]json.RawMessage, error) {
@@ -153,7 +162,13 @@ func (c *Client) GetUserTradesRaw(ctx context.Context, req GetUserTradesRawReque
 
 	var all []json.RawMessage
 	nextCursor := "MA=="
-	for {
+	seenCursors := map[string]struct{}{}
+	for page := 0; page < maxTradePages; page++ {
+		if _, seen := seenCursors[nextCursor]; seen {
+			return nil, protocolError("orders.get_user_trades_raw", "repeated next_cursor: "+nextCursor)
+		}
+		seenCursors[nextCursor] = struct{}{}
+
 		body, err := c.getUserTradesPage(ctx, creds, nextCursor, baseQuery, "orders.get_user_trades_raw")
 		if err != nil {
 			return nil, err
@@ -173,6 +188,7 @@ func (c *Client) GetUserTradesRaw(ctx context.Context, req GetUserTradesRawReque
 		}
 		nextCursor = page.NextCursor
 	}
+	return nil, protocolError("orders.get_user_trades_raw", "pagination exceeded max pages="+strconv.Itoa(maxTradePages))
 }
 
 func (c *Client) PlaceMakerOrder(ctx context.Context, req PlaceMakerOrderRequest) (PlaceMakerOrderResponse, error) {
@@ -387,4 +403,8 @@ func authError(op string, err error) error {
 
 func decodeError(op string, body []byte, err error) error {
 	return &polyerrors.Error{Kind: polyerrors.ErrDecode, Op: op, Message: err.Error(), Cause: err, RawBody: body}
+}
+
+func protocolError(op, message string) error {
+	return &polyerrors.Error{Kind: polyerrors.ErrProtocol, Op: op, Message: message}
 }

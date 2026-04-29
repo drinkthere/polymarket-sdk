@@ -173,6 +173,37 @@ func TestUpdateAllowanceAllowsEmptySuccessBody(t *testing.T) {
 	}
 }
 
+func TestUpdateAllowanceRequiresConditionalTokenID(t *testing.T) {
+	client := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("server should not be called")
+	}))
+
+	balancesClient, err := NewClient(client, validAuthConfig())
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	_, err = balancesClient.UpdateAllowance(t.Context(), UpdateAllowanceRequest{
+		Credentials:   validCreds(),
+		SignatureType: 0,
+		AssetType:     AssetTypeConditional,
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var typed *polyerrors.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected typed error, got %T", err)
+	}
+	if typed.Kind != polyerrors.ErrRequestBuild {
+		t.Fatalf("expected ErrRequestBuild, got %v", typed.Kind)
+	}
+	if typed.Op != "balances.update_allowance" {
+		t.Fatalf("unexpected op: %q", typed.Op)
+	}
+}
+
 func TestUpdateAllowanceIncludesConditionalTokenID(t *testing.T) {
 	client := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/balance-allowance/update" {
