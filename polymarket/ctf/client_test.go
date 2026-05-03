@@ -18,6 +18,7 @@ import (
 
 const testCTFABIJSON = `[
   {"inputs":[{"name":"conditionId","type":"bytes32"}],"name":"payoutDenominator","outputs":[{"type":"uint256"}],"stateMutability":"view","type":"function"},
+  {"inputs":[{"name":"conditionId","type":"bytes32"},{"name":"index","type":"uint256"}],"name":"payoutNumerators","outputs":[{"type":"uint256"}],"stateMutability":"view","type":"function"},
   {"inputs":[{"name":"collateralToken","type":"address"},{"name":"parentCollectionId","type":"bytes32"},{"name":"conditionId","type":"bytes32"},{"name":"indexSets","type":"uint256[]"}],"name":"redeemPositions","outputs":[],"stateMutability":"nonpayable","type":"function"}
 ]`
 
@@ -234,6 +235,76 @@ func TestIsResolvedReturnsFalseWhenPayoutDenominatorZero(t *testing.T) {
 	}
 	if resolved {
 		t.Fatal("expected unresolved")
+	}
+}
+
+func TestGetPayoutNumeratorReturnsOutcomePayout(t *testing.T) {
+	expectedCondition := validConditionID
+	caller := stubContractCaller{
+		callContract: func(msg ethereum.CallMsg) ([]byte, error) {
+			if msg.To == nil {
+				t.Fatal("expected call target")
+			}
+			if *msg.To != CTFContractAddress {
+				t.Fatalf("target = %s", msg.To.Hex())
+			}
+			assertSelector(t, msg.Data, "payoutNumerators(bytes32,uint256)")
+
+			method := mustTestABI(t, testCTFABIJSON).Methods["payoutNumerators"]
+			args, err := method.Inputs.Unpack(msg.Data[4:])
+			if err != nil {
+				t.Fatalf("unpack inputs: %v", err)
+			}
+			if got := args[0].([32]byte); got != conditionIDToHash(expectedCondition) {
+				t.Fatalf("condition = %x", got)
+			}
+			if got := args[1].(*big.Int); got.Cmp(big.NewInt(1)) != 0 {
+				t.Fatalf("outcome index = %s want 1", got)
+			}
+
+			outputs, err := method.Outputs.Pack(big.NewInt(1))
+			if err != nil {
+				t.Fatalf("pack outputs: %v", err)
+			}
+			return outputs, nil
+		},
+	}
+
+	client, err := NewClientWithCaller(caller)
+	if err != nil {
+		t.Fatalf("NewClientWithCaller() error = %v", err)
+	}
+
+	numerator, err := client.GetPayoutNumerator(t.Context(), expectedCondition, 1)
+	if err != nil {
+		t.Fatalf("GetPayoutNumerator() error = %v", err)
+	}
+	if numerator.Cmp(big.NewInt(1)) != 0 {
+		t.Fatalf("numerator = %s want 1", numerator)
+	}
+}
+
+func TestGetPayoutNumeratorClassifiesCallError(t *testing.T) {
+	client, err := NewClientWithCaller(stubContractCaller{
+		callContract: func(_ ethereum.CallMsg) ([]byte, error) {
+			return nil, context.DeadlineExceeded
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewClientWithCaller() error = %v", err)
+	}
+
+	_, err = client.GetPayoutNumerator(t.Context(), validConditionID, 0)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var typed *polyerrors.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected typed error, got %T", err)
+	}
+	if typed.Kind != polyerrors.ErrTimeout {
+		t.Fatalf("kind = %q want %q", typed.Kind, polyerrors.ErrTimeout)
 	}
 }
 

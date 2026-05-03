@@ -21,6 +21,7 @@ import (
 
 const ctfABIJSON = `[
   {"inputs":[{"name":"conditionId","type":"bytes32"}],"name":"payoutDenominator","outputs":[{"type":"uint256"}],"stateMutability":"view","type":"function"},
+  {"inputs":[{"name":"conditionId","type":"bytes32"},{"name":"index","type":"uint256"}],"name":"payoutNumerators","outputs":[{"type":"uint256"}],"stateMutability":"view","type":"function"},
   {"inputs":[{"name":"collateralToken","type":"address"},{"name":"parentCollectionId","type":"bytes32"},{"name":"conditionId","type":"bytes32"},{"name":"indexSets","type":"uint256[]"}],"name":"redeemPositions","outputs":[],"stateMutability":"nonpayable","type":"function"}
 ]`
 
@@ -170,6 +171,63 @@ func (c *Client) IsResolved(ctx context.Context, conditionID string) (bool, erro
 	}
 
 	return denominator.Sign() > 0, nil
+}
+
+func (c *Client) GetPayoutNumerator(ctx context.Context, conditionID string, outcomeIndex uint64) (*big.Int, error) {
+	conditionHash, err := parseConditionID(conditionID)
+	if err != nil {
+		return nil, requestError("ctf.payout_numerator", err)
+	}
+
+	data, err := ctfABI.Pack("payoutNumerators", conditionHash, new(big.Int).SetUint64(outcomeIndex))
+	if err != nil {
+		return nil, requestError("ctf.payout_numerator", err)
+	}
+
+	target := CTFContractAddress
+	raw, err := c.caller.CallContract(ctx, ethereum.CallMsg{
+		To:   &target,
+		Data: data,
+	}, nil)
+	if err != nil {
+		return nil, &polyerrors.Error{
+			Kind:    classifyRPCError(err),
+			Op:      "ctf.payout_numerator",
+			Message: err.Error(),
+			Cause:   err,
+		}
+	}
+
+	out, err := ctfABI.Unpack("payoutNumerators", raw)
+	if err != nil {
+		return nil, &polyerrors.Error{
+			Kind:    polyerrors.ErrDecode,
+			Op:      "ctf.payout_numerator",
+			Message: err.Error(),
+			Cause:   err,
+			RawBody: raw,
+		}
+	}
+	if len(out) != 1 {
+		return nil, &polyerrors.Error{
+			Kind:    polyerrors.ErrDecode,
+			Op:      "ctf.payout_numerator",
+			Message: "unexpected payoutNumerators response",
+			RawBody: raw,
+		}
+	}
+
+	numerator, ok := out[0].(*big.Int)
+	if !ok {
+		return nil, &polyerrors.Error{
+			Kind:    polyerrors.ErrDecode,
+			Op:      "ctf.payout_numerator",
+			Message: "unexpected payoutNumerators type",
+			RawBody: raw,
+		}
+	}
+
+	return new(big.Int).Set(numerator), nil
 }
 
 func BuildRedeemPositionsCalldata(req RedeemPositionsRequest) (common.Address, []byte, error) {
