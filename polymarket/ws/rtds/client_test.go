@@ -83,6 +83,59 @@ func TestClient_SubscribeCrypto_BTC_UsesStringFilter(t *testing.T) {
 	}
 }
 
+func TestClient_KeepaliveSendsPolymarketPING(t *testing.T) {
+	t.Parallel()
+
+	pingCh := make(chan []byte, 1)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		up := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+		c, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade: %v", err)
+			return
+		}
+		defer c.Close()
+
+		for {
+			mt, payload, err := c.ReadMessage()
+			if err != nil {
+				return
+			}
+			if mt == websocket.TextMessage && string(payload) == "PING" {
+				pingCh <- append([]byte(nil), payload...)
+				return
+			}
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := NewClient(Config{
+		URL:          "ws" + srv.URL[len("http"):],
+		PingInterval: 25 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	if err := c.Connect(ctx); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	select {
+	case got := <-pingCh:
+		if string(got) != "PING" {
+			t.Fatalf("keepalive payload = %q, want PING", string(got))
+		}
+	case <-ctx.Done():
+		t.Fatalf("expected Polymarket text PING before timeout: %v", ctx.Err())
+	}
+}
+
 func TestClient_Subscribe_Unsubscribe_Read(t *testing.T) {
 	t.Parallel()
 

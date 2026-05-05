@@ -2,6 +2,7 @@ package ctf
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"encoding/hex"
 	"errors"
 	"math/big"
@@ -14,6 +15,8 @@ import (
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 
 	polyerrors "github.com/drinkthere/polymarket-sdk/polymarket/errors"
@@ -32,6 +35,8 @@ const negRiskABIJSON = `[
 const mergeCtfABIJSON = `[
   {"inputs":[{"name":"collateralToken","type":"address"},{"name":"parentCollectionId","type":"bytes32"},{"name":"conditionId","type":"bytes32"},{"name":"indexSets","type":"uint256[]"},{"name":"amount","type":"uint256"}],"name":"mergePositions","outputs":[],"stateMutability":"nonpayable","type":"function"}
 ]`
+
+const defaultTransactionGasLimit uint64 = 350000
 
 var (
 	ctfABI        = mustParseABI(ctfABIJSON)
@@ -54,6 +59,25 @@ type Client struct {
 	closeFn   func() error
 	closeOnce sync.Once
 	closeErr  error
+}
+
+type TransactionBackend interface {
+	PendingNonceAt(ctx context.Context, account common.Address) (uint64, error)
+	SuggestGasPrice(ctx context.Context) (*big.Int, error)
+	EstimateGas(ctx context.Context, call ethereum.CallMsg) (uint64, error)
+	SendTransaction(ctx context.Context, tx *types.Transaction) error
+	ChainID(ctx context.Context) (*big.Int, error)
+}
+
+type TransactionClient struct {
+	backend    TransactionBackend
+	privateKey *ecdsa.PrivateKey
+	from       common.Address
+	chainID    *big.Int
+	gasLimit   uint64
+	closeFn    func() error
+	closeOnce  sync.Once
+	closeErr   error
 }
 
 func NewClient(cfg Config) (*Client, error) {
@@ -87,6 +111,83 @@ func NewClientWithCaller(caller ContractCaller) (*Client, error) {
 	return newClient(caller, nil)
 }
 
+func NewTransactionClientContext(ctx context.Context, cfg TransactionConfig) (*TransactionClient, error) {
+	rpcURL := strings.TrimSpace(cfg.RPCURL)
+	if rpcURL == "" {
+		return nil, &polyerrors.Error{
+			Kind:    polyerrors.ErrRequestBuild,
+			Op:      "ctf.tx.new",
+			Message: "rpc_url is required",
+		}
+	}
+	eth, err := ethclient.DialContext(ctx, rpcURL)
+	if err != nil {
+		return nil, &polyerrors.Error{
+			Kind:    classifyRPCError(err),
+			Op:      "ctf.tx.new",
+			Message: err.Error(),
+			Cause:   err,
+		}
+	}
+	return NewTransactionClientWithBackend(ctx, eth, func() error {
+		eth.Close()
+		return nil
+	}, cfg)
+}
+
+func NewTransactionClientWithBackend(ctx context.Context, backend TransactionBackend, closeFn func() error, cfg TransactionConfig) (*TransactionClient, error) {
+	if backend == nil {
+		return nil, &polyerrors.Error{
+			Kind:    polyerrors.ErrRequestBuild,
+			Op:      "ctf.tx.new",
+			Message: "transaction backend is required",
+		}
+	}
+	privateKeyHex := strings.TrimSpace(cfg.PrivateKey)
+	privateKeyHex = strings.TrimPrefix(strings.TrimPrefix(privateKeyHex, "0x"), "0X")
+	if privateKeyHex == "" {
+		return nil, &polyerrors.Error{
+			Kind:    polyerrors.ErrRequestBuild,
+			Op:      "ctf.tx.new",
+			Message: "private_key is required",
+		}
+	}
+	privateKey, err := crypto.HexToECDSA(privateKeyHex)
+	if err != nil {
+		return nil, &polyerrors.Error{
+			Kind:    polyerrors.ErrRequestBuild,
+			Op:      "ctf.tx.new",
+			Message: err.Error(),
+			Cause:   err,
+		}
+	}
+	chainID := big.NewInt(cfg.ChainID)
+	if cfg.ChainID <= 0 {
+		var err error
+		chainID, err = backend.ChainID(ctx)
+		if err != nil {
+			return nil, &polyerrors.Error{
+				Kind:    classifyRPCError(err),
+				Op:      "ctf.tx.new",
+				Message: err.Error(),
+				Cause:   err,
+			}
+		}
+	}
+	gasLimit := cfg.GasLimit
+	if gasLimit == 0 {
+		gasLimit = defaultTransactionGasLimit
+	}
+	return &TransactionClient{
+		backend:    backend,
+		privateKey: privateKey,
+		from:       crypto.PubkeyToAddress(privateKey.PublicKey),
+		chainID:    chainID,
+		gasLimit:   gasLimit,
+		closeFn:    closeFn,
+	}, nil
+}
+
 func newClient(caller ContractCaller, closeFn func() error) (*Client, error) {
 	if isNilContractCaller(caller) {
 		return nil, &polyerrors.Error{
@@ -114,6 +215,88 @@ func (c *Client) Close() error {
 	})
 
 	return c.closeErr
+}
+
+func (c *TransactionClient) Close() error {
+	if c == nil {
+		return nil
+	}
+	c.closeOnce.Do(func() {
+		if c.closeFn != nil {
+			c.closeErr = c.closeFn()
+		}
+	})
+	return c.closeErr
+}
+
+func (c *TransactionClient) MergePositions(ctx context.Context, req MergePositionsRequest) (TransactionResult, error) {
+	target, data, err := BuildMergePositionsCalldata(req)
+	if err != nil {
+		return TransactionResult{}, err
+	}
+	tx, err := c.buildSignedTransaction(ctx, target, data)
+	if err != nil {
+		return TransactionResult{}, err
+	}
+	if err := c.backend.SendTransaction(ctx, tx); err != nil {
+		return TransactionResult{}, &polyerrors.Error{
+			Kind:    classifyRPCError(err),
+			Op:      "ctf.tx.merge_positions",
+			Message: err.Error(),
+			Cause:   err,
+		}
+	}
+	return TransactionResult{
+		Hash:   tx.Hash().Hex(),
+		Target: target,
+	}, nil
+}
+
+func (c *TransactionClient) buildSignedTransaction(ctx context.Context, target common.Address, data []byte) (*types.Transaction, error) {
+	if c == nil || c.backend == nil || c.privateKey == nil {
+		return nil, requestError("ctf.tx.build", errMissing("transaction client is required"))
+	}
+	nonce, err := c.backend.PendingNonceAt(ctx, c.from)
+	if err != nil {
+		return nil, &polyerrors.Error{
+			Kind:    classifyRPCError(err),
+			Op:      "ctf.tx.build",
+			Message: err.Error(),
+			Cause:   err,
+		}
+	}
+	gasPrice, err := c.backend.SuggestGasPrice(ctx)
+	if err != nil {
+		return nil, &polyerrors.Error{
+			Kind:    classifyRPCError(err),
+			Op:      "ctf.tx.build",
+			Message: err.Error(),
+			Cause:   err,
+		}
+	}
+	gasLimit := c.gasLimit
+	if gasLimit == 0 {
+		estimated, err := c.backend.EstimateGas(ctx, ethereum.CallMsg{
+			From: c.from,
+			To:   &target,
+			Data: data,
+		})
+		if err != nil {
+			return nil, &polyerrors.Error{
+				Kind:    classifyRPCError(err),
+				Op:      "ctf.tx.build",
+				Message: err.Error(),
+				Cause:   err,
+			}
+		}
+		gasLimit = estimated
+	}
+	tx := types.NewTransaction(nonce, target, big.NewInt(0), gasLimit, gasPrice, data)
+	signed, err := types.SignTx(tx, types.LatestSignerForChainID(c.chainID), c.privateKey)
+	if err != nil {
+		return nil, requestError("ctf.tx.build", err)
+	}
+	return signed, nil
 }
 
 func (c *Client) IsResolved(ctx context.Context, conditionID string) (bool, error) {

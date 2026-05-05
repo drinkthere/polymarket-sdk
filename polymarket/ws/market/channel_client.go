@@ -24,17 +24,7 @@ type ChannelUnsubscribeRequest struct {
 }
 
 func NewChannelClient(cfg Config) (*ChannelClient, error) {
-	wsc, err := ws.NewClient(ws.ClientConfig{
-		URL:              cfg.URL,
-		Header:           cfg.Header,
-		Dialer:           cfg.Dialer,
-		WriteTimeout:     cfg.WriteTimeout,
-		PingInterval:     cfg.PingInterval,
-		AppPingInterval:  cfg.AppPingInterval,
-		AppPingPayload:   cfg.AppPingPayload,
-		Reconnect:        cfg.Reconnect,
-		ReconnectBackoff: cfg.ReconnectBackoff,
-	})
+	wsc, err := ws.NewClient(polymarketWSConfig(cfg))
 	if err != nil {
 		return nil, err
 	}

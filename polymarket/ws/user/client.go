@@ -91,21 +91,31 @@ type Client struct {
 }
 
 func NewClient(cfg Config) (*Client, error) {
-	wsc, err := ws.NewClient(ws.ClientConfig{
-		URL:              cfg.URL,
-		Header:           cfg.Header,
-		Dialer:           cfg.Dialer,
-		WriteTimeout:     cfg.WriteTimeout,
-		PingInterval:     cfg.PingInterval,
-		AppPingInterval:  cfg.AppPingInterval,
-		AppPingPayload:   cfg.AppPingPayload,
-		Reconnect:        cfg.Reconnect,
-		ReconnectBackoff: cfg.ReconnectBackoff,
-	})
+	wsc, err := ws.NewClient(polymarketWSConfig(cfg))
 	if err != nil {
 		return nil, err
 	}
 	return &Client{ws: wsc}, nil
+}
+
+func polymarketWSConfig(cfg Config) ws.ClientConfig {
+	pingInterval := cfg.PingInterval
+	appPingInterval := cfg.AppPingInterval
+	if appPingInterval <= 0 && pingInterval > 0 {
+		appPingInterval = pingInterval
+		pingInterval = 0
+	}
+	return ws.ClientConfig{
+		URL:              cfg.URL,
+		Header:           cfg.Header,
+		Dialer:           cfg.Dialer,
+		WriteTimeout:     cfg.WriteTimeout,
+		PingInterval:     pingInterval,
+		AppPingInterval:  appPingInterval,
+		AppPingPayload:   cfg.AppPingPayload,
+		Reconnect:        cfg.Reconnect,
+		ReconnectBackoff: cfg.ReconnectBackoff,
+	}
 }
 
 func (c *Client) Connect(ctx context.Context) error { return c.ws.Connect(ctx) }
