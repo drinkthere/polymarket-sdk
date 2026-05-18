@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"strings"
 	"time"
 
 	polyauth "github.com/drinkthere/polymarket-sdk/polymarket/auth"
@@ -150,8 +149,7 @@ func (c *Client) Subscribe(ctx context.Context, req SubscribeRequest) error {
 		return err
 	}
 
-	key := "user:" + strings.Join(req.Markets, ",")
-	c.ws.TrackSubscription(key, raw)
+	c.ws.TrackSubscription("user", raw)
 	return nil
 }
 

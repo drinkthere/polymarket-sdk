@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,6 +99,81 @@ func TestSubscribeReplaysOnReconnect(t *testing.T) {
 	}
 	if msg.Events[0].Order.ID != "ord-1" {
 		t.Fatalf("decoded order id = %q", msg.Events[0].Order.ID)
+	}
+}
+
+func TestSubscribeReplaysOnlyLatestUserSubscriptionOnReconnect(t *testing.T) {
+	var connCount int
+	subscribeCh := make(chan map[string]any, 4)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		up := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+		c, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			t.Fatalf("Upgrade() error = %v", err)
+		}
+		defer c.Close()
+
+		connCount++
+		readSubscribe := func() map[string]any {
+			_, payload, err := c.ReadMessage()
+			if err != nil {
+				t.Fatalf("ReadMessage() error = %v", err)
+			}
+			var msg map[string]any
+			if err := json.Unmarshal(payload, &msg); err != nil {
+				t.Fatalf("Unmarshal() error = %v", err)
+			}
+			return msg
+		}
+		if connCount == 1 {
+			subscribeCh <- readSubscribe()
+			subscribeCh <- readSubscribe()
+			_ = c.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "bye"), time.Now().Add(time.Second))
+			return
+		}
+		subscribeCh <- readSubscribe()
+	}))
+	defer srv.Close()
+
+	client, err := NewClient(Config{
+		URL:              "ws" + strings.TrimPrefix(srv.URL, "http"),
+		Reconnect:        true,
+		ReconnectBackoff: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	defer client.Close()
+	if err := client.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect() error = %v", err)
+	}
+
+	creds := polyauth.APICredentials{Key: "key", Secret: "secret", Passphrase: "pass"}
+	if err := client.Subscribe(context.Background(), SubscribeRequest{Credentials: creds, Markets: []string{"m1"}}); err != nil {
+		t.Fatalf("Subscribe(m1) error = %v", err)
+	}
+	if err := client.Subscribe(context.Background(), SubscribeRequest{Credentials: creds, Markets: []string{"m1", "m2"}}); err != nil {
+		t.Fatalf("Subscribe(m1,m2) error = %v", err)
+	}
+
+	deadline := time.After(2 * time.Second)
+	var messages []map[string]any
+	for len(messages) < 3 {
+		select {
+		case msg := <-subscribeCh:
+			messages = append(messages, msg)
+		case <-deadline:
+			t.Fatal("timed out waiting for replayed subscription")
+		}
+	}
+	replay := messages[2]
+	markets, ok := replay["markets"].([]any)
+	if !ok {
+		t.Fatalf("unexpected markets payload: %#v", replay["markets"])
+	}
+	if got := len(markets); got != 2 {
+		t.Fatalf("expected only latest cumulative subscription to replay, got markets=%#v", markets)
 	}
 }
 
