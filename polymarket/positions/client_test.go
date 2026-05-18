@@ -51,7 +51,7 @@ func TestClientListBuildsRequestAndDecodesResponse(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `[{"asset":"tok-1","conditionId":"cond-1","size":12.5,"avgPrice":0.43,"title":"Will BTC close above $100k?","outcome":"Yes","side":"BUY","negativeRisk":false,"outcomeIndex":0}]`)
+		_, _ = io.WriteString(w, `[{"asset":"tok-1","conditionId":"cond-1","size":12.5,"avgPrice":0.43,"curPrice":0.58,"currentValue":7.25,"initialValue":5.375,"title":"Will BTC close above $100k?","outcome":"Yes","side":"BUY","negativeRisk":false,"outcomeIndex":0}]`)
 	}))
 
 	client, err := NewClient(httpClient)
@@ -80,6 +80,9 @@ func TestClientListBuildsRequestAndDecodesResponse(t *testing.T) {
 	}
 	if got.Size != 12.5 || got.AvgPrice != 0.43 || got.Outcome != "Yes" || got.Side != "BUY" {
 		t.Fatalf("unexpected position numeric/text fields: %+v", got)
+	}
+	if got.CurPrice != 0.58 || got.CurrentValue != 7.25 || got.InitialValue != 5.375 {
+		t.Fatalf("unexpected position value fields: %+v", got)
 	}
 	if got.NegativeRisk || got.OutcomeIndex != 0 {
 		t.Fatalf("unexpected position flags: %+v", got)

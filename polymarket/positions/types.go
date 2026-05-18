@@ -18,6 +18,9 @@ type Position struct {
 	ConditionID  string  `json:"conditionId"`
 	Size         float64 `json:"size"`
 	AvgPrice     float64 `json:"avgPrice"`
+	CurPrice     float64 `json:"curPrice"`
+	CurrentValue float64 `json:"currentValue"`
+	InitialValue float64 `json:"initialValue"`
 	Title        string  `json:"title"`
 	Outcome      string  `json:"outcome"`
 	Side         string  `json:"side"`

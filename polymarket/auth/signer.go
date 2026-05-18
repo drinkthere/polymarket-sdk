@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -22,13 +23,18 @@ const (
 	CTFExchangeV2Address        = "0xE111180000d2663C0091e4f400237545B87B996B"
 	NegRiskCTFExchangeV2Address = "0xe2222d279d744050d28e00520010520000310F59"
 	Bytes32Zero                 = "0x0000000000000000000000000000000000000000000000000000000000000000"
+	SignatureTypePoly1271       = 3
 )
 
 var (
-	domainTypeHash = crypto.Keccak256Hash([]byte(
+	orderTypeString = "Order(uint256 salt,address maker,address signer,uint256 tokenId,uint256 makerAmount,uint256 takerAmount,uint8 side,uint8 signatureType,uint256 timestamp,bytes32 metadata,bytes32 builder)"
+	domainTypeHash  = crypto.Keccak256Hash([]byte(
 		"EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"))
-	orderTypeHash = crypto.Keccak256Hash([]byte(
-		"Order(uint256 salt,address maker,address signer,uint256 tokenId,uint256 makerAmount,uint256 takerAmount,uint8 side,uint8 signatureType,uint256 timestamp,bytes32 metadata,bytes32 builder)"))
+	orderTypeHash  = crypto.Keccak256Hash([]byte(orderTypeString))
+	soladyTypeHash = crypto.Keccak256Hash([]byte(
+		"TypedDataSign(Order contents,string name,string version,uint256 chainId,address verifyingContract,bytes32 salt)" + orderTypeString))
+	depositWalletNameHash    = hashString("DepositWallet")
+	depositWalletVersionHash = hashString("1")
 )
 
 type APICredentials struct {
@@ -114,6 +120,7 @@ type CreateSignedOrderRequest struct {
 	TickSize   float64
 	Expiration int64
 	Timestamp  int64
+	Salt       int64
 	Metadata   string
 	Builder    string
 }
@@ -259,7 +266,10 @@ func (s *Signer) CreateSignedOrder(req CreateSignedOrderRequest) (SignedOrder, e
 		takerAmount = new(big.Int).SetUint64(uint64(math.Round(takerFloat)))
 	}
 
-	saltVal := int64(float64(time.Now().Unix()) * rand.Float64())
+	saltVal := req.Salt
+	if saltVal <= 0 {
+		saltVal = int64(float64(time.Now().Unix()) * rand.Float64())
+	}
 	saltBig := new(big.Int).SetInt64(saltVal)
 
 	tokenIDBig := new(big.Int)
@@ -274,6 +284,13 @@ func (s *Signer) CreateSignedOrder(req CreateSignedOrderRequest) (SignedOrder, e
 	maker := s.address
 	if s.signatureType == 2 && strings.TrimSpace(s.funder) != "" {
 		maker = common.HexToAddress(s.funder)
+	}
+	if s.signatureType == SignatureTypePoly1271 {
+		if strings.TrimSpace(s.funder) == "" {
+			return SignedOrder{}, fmt.Errorf("funder_address is required for signature_type=3")
+		}
+		maker = common.HexToAddress(s.funder)
+		signerAddr = maker
 	}
 
 	exchangeAddr := CTFExchangeV2Address
@@ -312,13 +329,9 @@ func (s *Signer) CreateSignedOrder(req CreateSignedOrderRequest) (SignedOrder, e
 	)
 
 	domainSep := buildDomainSeparator(s.chainID, exchangeAddr)
-	digest := crypto.Keccak256Hash([]byte{0x19, 0x01}, domainSep.Bytes(), structHash.Bytes())
-	sig, err := crypto.Sign(digest.Bytes(), s.privateKey)
+	sig, err := s.signOrder(domainSep, structHash, signerAddr)
 	if err != nil {
 		return SignedOrder{}, err
-	}
-	if sig[64] < 27 {
-		sig[64] += 27
 	}
 
 	return SignedOrder{
@@ -336,6 +349,46 @@ func (s *Signer) CreateSignedOrder(req CreateSignedOrderRequest) (SignedOrder, e
 		Builder:       builder,
 		Signature:     "0x" + common.Bytes2Hex(sig),
 	}, nil
+}
+
+func (s *Signer) signOrder(domainSep common.Hash, contentsHash common.Hash, signerAddr common.Address) ([]byte, error) {
+	digest := crypto.Keccak256Hash([]byte{0x19, 0x01}, domainSep.Bytes(), contentsHash.Bytes())
+	if s.signatureType == SignatureTypePoly1271 {
+		typedDataSignStructHash := crypto.Keccak256Hash(
+			soladyTypeHash.Bytes(),
+			contentsHash.Bytes(),
+			depositWalletNameHash.Bytes(),
+			depositWalletVersionHash.Bytes(),
+			common.LeftPadBytes(big.NewInt(int64(s.chainID)).Bytes(), 32),
+			common.LeftPadBytes(signerAddr.Bytes(), 32),
+			common.Hex2Bytes(strings.TrimPrefix(Bytes32Zero, "0x")),
+		)
+		digest = crypto.Keccak256Hash([]byte{0x19, 0x01}, domainSep.Bytes(), typedDataSignStructHash.Bytes())
+	}
+
+	sig, err := crypto.Sign(digest.Bytes(), s.privateKey)
+	if err != nil {
+		return nil, err
+	}
+	if sig[64] < 27 {
+		sig[64] += 27
+	}
+	if s.signatureType != SignatureTypePoly1271 {
+		return sig, nil
+	}
+	return appendPoly1271Context(sig, domainSep, contentsHash), nil
+}
+
+func appendPoly1271Context(sig []byte, domainSep common.Hash, contentsHash common.Hash) []byte {
+	out := make([]byte, 0, len(sig)+32+32+len(orderTypeString)+2)
+	out = append(out, sig...)
+	out = append(out, domainSep.Bytes()...)
+	out = append(out, contentsHash.Bytes()...)
+	out = append(out, []byte(orderTypeString)...)
+	var length [2]byte
+	binary.BigEndian.PutUint16(length[:], uint16(len(orderTypeString)))
+	out = append(out, length[:]...)
+	return out
 }
 
 func (s *Signer) signClobAuth(timestamp int64, nonce int64) (string, error) {

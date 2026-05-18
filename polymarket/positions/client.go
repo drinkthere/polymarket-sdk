@@ -30,6 +30,9 @@ type positionPayload struct {
 	ConditionID  *string  `json:"conditionId"`
 	Size         *float64 `json:"size"`
 	AvgPrice     *float64 `json:"avgPrice"`
+	CurPrice     *float64 `json:"curPrice"`
+	CurrentValue *float64 `json:"currentValue"`
+	InitialValue *float64 `json:"initialValue"`
 	Title        *string  `json:"title"`
 	Outcome      *string  `json:"outcome"`
 	Side         *string  `json:"side"`
@@ -301,6 +304,15 @@ func convertPositions(op string, payloads []positionPayload) ([]Position, error)
 			AvgPrice:     *payload.AvgPrice,
 			NegativeRisk: *payload.NegativeRisk,
 			OutcomeIndex: *payload.OutcomeIndex,
+		}
+		if payload.CurPrice != nil {
+			position.CurPrice = *payload.CurPrice
+		}
+		if payload.CurrentValue != nil {
+			position.CurrentValue = *payload.CurrentValue
+		}
+		if payload.InitialValue != nil {
+			position.InitialValue = *payload.InitialValue
 		}
 		if payload.Title != nil {
 			position.Title = *payload.Title
