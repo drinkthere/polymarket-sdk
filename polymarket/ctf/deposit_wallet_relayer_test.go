@@ -328,7 +328,9 @@ func TestDepositWalletRelayerRedeemPositionsSubmitsWalletBatch(t *testing.T) {
 		ConditionID: validConditionID,
 		IndexSets:   []uint64{1, 2},
 	}
-	target, data, err := BuildRedeemPositionsCalldata(req)
+	expectedReq := req
+	expectedReq.CollateralToken = CTFCollateralAddress
+	target, data, err := BuildRedeemPositionsCalldata(expectedReq)
 	if err != nil {
 		t.Fatalf("BuildRedeemPositionsCalldata: %v", err)
 	}
@@ -345,6 +347,68 @@ func TestDepositWalletRelayerRedeemPositionsSubmitsWalletBatch(t *testing.T) {
 	}
 	if calls[0].Target != target.Hex() || calls[0].Value != "0" || calls[0].Data != "0x"+hex.EncodeToString(data) {
 		t.Fatalf("unexpected redeem call: %+v", calls[0])
+	}
+}
+
+func TestDepositWalletRelayerRedeemPositionsUsesConfiguredCollateralWhenRequestOmitsCollateral(t *testing.T) {
+	privateKey := "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+	wallet := common.HexToAddress("0x1690833999bf53eb8e2885a5e9a96280f7a7d790")
+
+	var submitted depositWalletBatchRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/nonce":
+			_, _ = w.Write([]byte(`{"nonce":"3"}`))
+		case "/submit":
+			if err := json.NewDecoder(r.Body).Decode(&submitted); err != nil {
+				t.Fatalf("decode submit: %v", err)
+			}
+			_, _ = w.Write([]byte(`{"transactionHash":"0xdef"}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	httpClient, err := httpx.New(httpx.ClientConfig{BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("httpx.New: %v", err)
+	}
+	client, err := NewDepositWalletRelayerClientWithHTTPClient(context.Background(), httpClient, DepositWalletRelayerConfig{
+		PrivateKey:      privateKey,
+		WalletAddress:   wallet.Hex(),
+		ChainID:         137,
+		CollateralToken: CTFCollateralAddress,
+	})
+	if err != nil {
+		t.Fatalf("NewDepositWalletRelayerClientWithHTTPClient: %v", err)
+	}
+
+	if _, err := client.RedeemPositions(context.Background(), RedeemPositionsRequest{
+		ConditionID: validConditionID,
+		IndexSets:   []uint64{1, 2},
+	}); err != nil {
+		t.Fatalf("RedeemPositions: %v", err)
+	}
+
+	calls := submitted.DepositWalletParams.Calls
+	if len(calls) != 1 {
+		t.Fatalf("calls len = %d want 1: %+v", len(calls), calls)
+	}
+	data, err := hex.DecodeString(calls[0].Data[2:])
+	if err != nil {
+		t.Fatalf("decode redeem data: %v", err)
+	}
+	method, err := ctfABI.MethodById(data[:4])
+	if err != nil {
+		t.Fatalf("redeem method: %v", err)
+	}
+	args, err := method.Inputs.Unpack(data[4:])
+	if err != nil {
+		t.Fatalf("unpack redeem: %v", err)
+	}
+	if got := args[0].(common.Address); got != CTFCollateralAddress {
+		t.Fatalf("redeem collateral = %s want %s", got.Hex(), CTFCollateralAddress.Hex())
 	}
 }
 

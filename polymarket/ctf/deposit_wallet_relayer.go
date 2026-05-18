@@ -224,7 +224,11 @@ func (c *DepositWalletRelayerClient) RedeemPositions(ctx context.Context, req Re
 	if c == nil || c.httpClient == nil || c.privateKey == nil {
 		return TransactionResult{}, requestError("ctf.deposit_wallet_relayer.redeem_positions", errMissing("relayer client is required"))
 	}
-	target, data, err := BuildRedeemPositionsCalldata(req)
+	redeemReq := req
+	if redeemReq.CollateralToken == (common.Address{}) {
+		redeemReq.CollateralToken = c.collateralToken
+	}
+	target, data, err := BuildRedeemPositionsCalldata(redeemReq)
 	if err != nil {
 		return TransactionResult{}, err
 	}
