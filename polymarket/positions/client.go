@@ -16,6 +16,7 @@ import (
 const (
 	listOp               = "positions.list"
 	listAllOp            = "positions.list_all"
+	DefaultBaseURL       = "https://data-api.polymarket.com"
 	defaultPageLimit     = 500
 	defaultSizeThreshold = "0"
 	maxPageOffset        = 10000
@@ -23,6 +24,7 @@ const (
 
 type Client struct {
 	httpClient *httpx.Client
+	baseURL    string
 }
 
 type positionPayload struct {
@@ -49,6 +51,25 @@ func NewClient(httpClient *httpx.Client) (*Client, error) {
 		}
 	}
 	return &Client{httpClient: httpClient}, nil
+}
+
+func NewDefaultClient() (*Client, error) {
+	return NewClientWithBaseURL(DefaultBaseURL)
+}
+
+func NewClientWithBaseURL(baseURL string) (*Client, error) {
+	httpClient, err := httpx.New(httpx.ClientConfig{BaseURL: baseURL})
+	if err != nil {
+		return nil, err
+	}
+	return &Client{httpClient: httpClient, baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/")}, nil
+}
+
+func (c *Client) BaseURL() string {
+	if c == nil {
+		return ""
+	}
+	return c.baseURL
 }
 
 func (c *Client) List(ctx context.Context, req ListRequest) (ListResponse, error) {

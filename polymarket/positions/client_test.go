@@ -89,6 +89,26 @@ func TestClientListBuildsRequestAndDecodesResponse(t *testing.T) {
 	}
 }
 
+func TestNewDefaultClientUsesPolymarketDataAPIBaseURL(t *testing.T) {
+	client, err := NewDefaultClient()
+	if err != nil {
+		t.Fatalf("NewDefaultClient() error = %v", err)
+	}
+	if client == nil {
+		t.Fatal("expected client")
+	}
+	if got := client.BaseURL(); got != DefaultBaseURL {
+		t.Fatalf("BaseURL() = %s, want %s", got, DefaultBaseURL)
+	}
+}
+
+func TestNewClientWithBaseURLRejectsEmptyBaseURL(t *testing.T) {
+	_, err := NewClientWithBaseURL("")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
 func TestClientListAllPaginatesUntilShortPage(t *testing.T) {
 	requests := 0
 	httpClient := newHTTPClientWithServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
